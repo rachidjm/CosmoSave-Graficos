@@ -2,6 +2,7 @@
 import 'dotenv/config';
 import { google } from 'googleapis';
 import pLimit from 'p-limit';
+import { Readable } from 'stream';
 
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
 if (!SPREADSHEET_ID) { console.error('❌ Falta SPREADSHEET_ID'); process.exit(1); }
@@ -40,7 +41,7 @@ const TIENDAS = {
 // 📂 Carpeta PTC en TU Drive personal (presentaciones temporales)
 const TEMP_FOLDER_ID = '18vTs2um4CCqnI1OKWfBdM5_bnqLSeSJO';
 
-// 🧩 ID de la plantilla en PTC (tu enlace)
+// 🧩 ID de la plantilla en PTC
 const TEMPLATE_PRESENTATION_ID = '1YrKAl9DlHncNcP-ZxQMvuH8RO4Sbwx-jL0zfeUd9pHM';
 
 const FILE_PREFIX  = 'Grafico';
@@ -212,11 +213,21 @@ async function deletePageElement(presId, objectId) {
   );
 }
 
+// 🔧 FIX: convertir Buffer en ReadableStream
+function bufferToStream(buffer) {
+  return new Readable({
+    read() {
+      this.push(buffer);
+      this.push(null);
+    }
+  });
+}
+
 async function uploadPDF({ parentId, name, pdfBuffer }) {
   await withRetry(`drive.upload ${name}`, () =>
     driveApi.files.create({
       requestBody: { name, parents: [parentId], mimeType: 'application/pdf' },
-      media: { mimeType: 'application/pdf', body: pdfBuffer }, // ✅ Buffer directo
+      media: { mimeType: 'application/pdf', body: bufferToStream(pdfBuffer) }, // ✅ stream válido
       fields: 'id',
       supportsAllDrives: true,
     })
