@@ -2,6 +2,7 @@
 import 'dotenv/config';
 import { google } from 'googleapis';
 import pLimit from 'p-limit';
+import { Readable } from 'stream';
 
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
 if (!SPREADSHEET_ID) { console.error('❌ Falta SPREADSHEET_ID'); process.exit(1); }
@@ -94,7 +95,6 @@ async function ensureDatedSubfolder(parentId, dateStr) {
   return folder.data.id;
 }
 
-/** Crear presentación temporal como COPIA de la plantilla en PTC (tu Drive personal) */
 async function createTempPresentation(name) {
   const file = await withRetry('drive.copy presentation', () =>
     driveApi.files.copy({
@@ -117,7 +117,6 @@ async function createTempPresentation(name) {
   return { presId, slideId, pgW, pgH };
 }
 
-/** Inserta un gráfico desde Sheets y lo ajusta al tamaño de la página con márgenes */
 async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
   const chartElemId = `chart_${chartId}_${Date.now()}`;
 
@@ -176,12 +175,12 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
   return chartElemId;
 }
 
-// 🔧 CORREGIDO: usar stream y convertir a Buffer
+// exporta el PDF como stream y lo convierte a Buffer
 async function exportPresentationPDF(presId) {
   const res = await withRetry('drive.export(pdf)', () =>
     driveApi.files.export(
       { fileId: presId, mimeType: 'application/pdf' },
-      { responseType: 'stream' } // ✅ stream, no arraybuffer
+      { responseType: 'stream' }
     )
   );
 
@@ -202,11 +201,21 @@ async function deletePageElement(presId, objectId) {
   );
 }
 
+// convierte Buffer en stream para la subida
+function bufferToStream(buffer) {
+  return new Readable({
+    read() {
+      this.push(buffer);
+      this.push(null);
+    }
+  });
+}
+
 async function uploadPDF({ parentId, name, pdfBuffer }) {
   await withRetry(`drive.upload ${name}`, () =>
     driveApi.files.create({
       requestBody: { name, parents: [parentId], mimeType: 'application/pdf' },
-      media: { mimeType: 'application/pdf', body: pdfBuffer }, // ✅ correcto
+      media: { mimeType: 'application/pdf', body: bufferToStream(pdfBuffer) }, // ✅ stream en vez de Buffer
       fields: 'id',
       supportsAllDrives: true,
     })
