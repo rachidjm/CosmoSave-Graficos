@@ -117,7 +117,7 @@ async function createTempPresentation(name) {
   return { presId, slideId, pgW, pgH };
 }
 
-/** Inserta un gráfico desde Sheets y lo ajusta al tamaño de la página */
+/** Inserta un gráfico desde Sheets y lo ajusta al tamaño de la página con márgenes */
 async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
   const chartElemId = `chart_${chartId}_${Date.now()}`;
 
@@ -151,7 +151,7 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
     })
   );
 
-  // 2. Ajustar tamaño y posición después (con márgenes)
+  // 2. Ajustar posición y escala con márgenes
   const margin = 10;
   await withRetry('slides.batchUpdate:fit', () =>
     slidesApi.presentations.batchUpdate({
@@ -159,21 +159,13 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
       requestBody: {
         requests: [
           {
-            updatePageElementProperties: {
-              objectId: chartElemId,
-              fields: 'size',
-              size: {
-                height: { magnitude: pgH - 2 * margin, unit: 'PT' },
-                width:  { magnitude: pgW - 2 * margin, unit: 'PT' }
-              }
-            }
-          },
-          {
             updatePageElementTransform: {
               objectId: chartElemId,
               applyMode: 'ABSOLUTE',
               transform: {
-                scaleX: 1, scaleY: 1, shearX: 0, shearY: 0,
+                scaleX: (pgW - 2 * margin) / pgW,
+                scaleY: (pgH - 2 * margin) / pgH,
+                shearX: 0, shearY: 0,
                 translateX: margin, translateY: margin, unit: 'PT'
               }
             }
