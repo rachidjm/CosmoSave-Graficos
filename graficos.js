@@ -130,10 +130,11 @@ async function createTempPresentation(name) {
   return { presId, slideId, pgW, pgH };
 }
 
-// ✅ FIX: ahora los gráficos ocupan toda la slide con márgenes
+// ✅ FIX: gráficos a página completa
 async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
   const chartElemId = `chart_${chartId}_${Date.now()}`;
 
+  // 1. Crear el gráfico (Google ignora size/transform aquí)
   await withRetry('slides.batchUpdate:createChart', () =>
     slidesApi.presentations.batchUpdate({
       presentationId: presId,
@@ -145,22 +146,7 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
               spreadsheetId: SPREADSHEET_ID,
               chartId: chartId,
               linkingMode: 'LINKED',
-              elementProperties: {
-                pageObjectId: slideId,
-                size: {
-                  height: { magnitude: pgH, unit: 'PT' },
-                  width:  { magnitude: pgW, unit: 'PT' }
-                },
-                transform: {
-                  scaleX: 1,
-                  scaleY: 1,
-                  shearX: 0,
-                  shearY: 0,
-                  translateX: 0,
-                  translateY: 0,
-                  unit: 'PT'
-                }
-              }
+              elementProperties: { pageObjectId: slideId }
             }
           }
         ]
@@ -168,8 +154,7 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
     })
   );
 
-  // ocupar casi toda la slide con márgenes de 20pt
-  const margin = 20;
+  // 2. Escalarlo manualmente para ocupar toda la slide
   await withRetry('slides.batchUpdate:fit', () =>
     slidesApi.presentations.batchUpdate({
       presentationId: presId,
@@ -180,13 +165,22 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
               objectId: chartElemId,
               applyMode: 'ABSOLUTE',
               transform: {
-                scaleX: (pgW - 2 * margin) / pgW,
-                scaleY: (pgH - 2 * margin) / pgH,
+                scaleX: 1,
+                scaleY: 1,
                 shearX: 0,
                 shearY: 0,
-                translateX: margin,
-                translateY: margin,
+                translateX: 0,
+                translateY: 0,
                 unit: 'PT'
+              }
+            }
+          },
+          {
+            updateSize: {
+              objectId: chartElemId,
+              size: {
+                height: { magnitude: pgH, unit: 'PT' },
+                width:  { magnitude: pgW, unit: 'PT' }
               }
             }
           }
