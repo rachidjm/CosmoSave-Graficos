@@ -17,7 +17,7 @@ const TIENDAS = {
   PERSONALES:      { sheetName: 'GRAFICOS PERSONALES', folderId: '1cwLOPdclOxy47Bkp7dwvhzHLIIjB4svO' },
 };
 
-// 📂 Carpeta PTC de tu Drive personal para temporales
+// 📂 Carpeta PTC en TU Drive personal
 const TEMP_FOLDER_ID = '18vTs2um4CCqnI1OKWfBdM5_bnqLSeSJO';
 
 const FILE_PREFIX  = 'Grafico';
@@ -86,14 +86,14 @@ async function ensureDatedSubfolder(parentId, dateStr) {
     driveApi.files.create({
       requestBody: { name: dateStr, mimeType: 'application/vnd.google-apps.folder', parents: [parentId] },
       fields: 'id,name',
+      supportsAllDrives: true,   // 👈 importante
     })
   );
   return folder.data.id;
 }
 
-/** Crear presentación temporal en carpeta PTC (tu Drive personal) */
+/** Crear presentación temporal directamente en TU carpeta PTC */
 async function createTempPresentation(name) {
-  // Crear presentación en TU carpeta PTC
   const file = await withRetry('drive.create presentation', () =>
     driveApi.files.create({
       requestBody: {
@@ -102,11 +102,11 @@ async function createTempPresentation(name) {
         parents: [TEMP_FOLDER_ID],   // 👈 fuerza a PTC
       },
       fields: 'id',
+      supportsAllDrives: true,       // 👈 clave para que no use el Drive de la SA
     })
   );
   const presId = file.data.id;
 
-  // Leer la presentación con Slides API
   const pres = await withRetry('slides.get', () =>
     slidesApi.presentations.get({ presentationId: presId })
   );
@@ -196,6 +196,7 @@ async function uploadPDF({ parentId, name, pdfBuffer }) {
       requestBody: { name, parents: [parentId], mimeType: 'application/pdf' },
       media: { mimeType: 'application/pdf', body: Buffer.from(pdfBuffer) },
       fields: 'id',
+      supportsAllDrives: true,
     })
   );
 }
@@ -243,10 +244,9 @@ async function main() {
       }
     })));
 
-    // borrar presentación temporal de PTC al acabar
     try {
       await withRetry('drive.delete pres', () =>
-        driveApi.files.delete({ fileId: presId })
+        driveApi.files.delete({ fileId: presId, supportsAllDrives: true })
       );
     } catch (e) {
       console.log(`⚠️ No se pudo borrar presentación temporal de ${tienda}: ${e.message || e}`);
