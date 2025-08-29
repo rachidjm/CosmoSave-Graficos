@@ -1,19 +1,4 @@
 #!/usr/bin/env node
-/**
- * Exporta todos los gráficos incrustados de las pestañas indicadas a PDF
- * y los sube a Google Drive en subcarpetas YYYY-MM-DD.
- *
- * Requisitos (los instala el workflow):
- *   npm i googleapis pdfkit node-fetch@3 p-limit image-size dotenv
- *
- * Secrets en GitHub Actions:
- *   - SPREADSHEET_ID  (ID de tu Google Sheet)
- *   - SA_JSON         (JSON COMPLETO del Service Account)
- *
- * IMPORTANTE:
- *   - Comparte el Spreadsheet y TODAS las carpetas destino (folderId) con el email del SA (Editor).
- */
-
 import 'dotenv/config';
 import fetch from 'node-fetch';
 import PDFDocument from 'pdfkit';
@@ -21,15 +6,10 @@ import { google } from 'googleapis';
 import pLimit from 'p-limit';
 import { imageSize } from 'image-size';
 
-/* =======================
- *  CONFIG
- * ======================= */
+/* ===== CONFIG ===== */
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
-if (!SPREADSHEET_ID) {
-  console.error('❌ Falta SPREADSHEET_ID (secret)'); process.exit(1);
-}
+if (!SPREADSHEET_ID) { console.error('❌ Falta SPREADSHEET_ID'); process.exit(1); }
 
-// Mapa tienda -> { sheetName, folderId }  (tus IDs reales)
 const TIENDAS = {
   ARENAL:          { sheetName: 'Dashboard',           folderId: '16PALsypZSdXiiXIgA_xMex710usAZAAZ' },
   DRUNI:           { sheetName: 'Dashboard D',         folderId: '1GrDRvmo9lR0RaBIw6y69OdFGV4Ao3KGi' },
@@ -41,40 +21,24 @@ const TIENDAS = {
   PERSONALES:      { sheetName: 'GRAFICOS PERSONALES', folderId: '1cwLOPdclOxy47Bkp7dwvhzHLIIjB4svO' },
 };
 
-const FILE_PREFIX  = 'Grafico';
-const DATE_STR     = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-const CONCURRENCY  = 3;
-const MAX_RETRIES  = 5;
+const FILE_PREFIX = 'Grafico';
+const DATE_STR    = new Date().toISOString().slice(0, 10);
+const CONCURRENCY = 3;
+const MAX_RETRIES = 5;
 
-/* =======================
- *  AUTH (Service Account)
- * ======================= */
+/* ===== AUTH desde GOOGLE_APPLICATION_CREDENTIALS ===== */
 const SCOPES = [
   'https://www.googleapis.com/auth/spreadsheets.readonly',
   'https://www.googleapis.com/auth/drive',
   'https://www.googleapis.com/auth/drive.file',
 ];
 
-let CREDENTIALS;
-try {
-  CREDENTIALS = JSON.parse(process.env.SA_JSON || '');
-  // 🔧 FIX CLAVE: convertir "\n" escapados en saltos reales para OpenSSL
-  if (CREDENTIALS.private_key && CREDENTIALS.private_key.includes('\\n')) {
-    CREDENTIALS.private_key = CREDENTIALS.private_key.replace(/\\n/g, '\n');
-  }
-} catch (e) {
-  console.error('❌ SA_JSON no es JSON válido'); process.exit(1);
-}
-
-const auth = new google.auth.GoogleAuth({ credentials: CREDENTIALS, scopes: SCOPES });
+const auth = new google.auth.GoogleAuth({ scopes: SCOPES });
 const sheetsApi = google.sheets({ version: 'v4', auth });
 const driveApi  = google.drive({ version: 'v3', auth });
 
-/* =======================
- *  HELPERS
- * ======================= */
+/* ===== HELPERS ===== */
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-
 async function withRetry(tag, fn) {
   let wait = 600;
   for (let i = 1; i <= MAX_RETRIES; i++) {
@@ -88,7 +52,6 @@ async function withRetry(tag, fn) {
   }
 }
 
-/** Lee sheetId y charts incrustados por pestaña (NO coge "hojas de gráfico"). */
 async function getSheetsAndCharts() {
   const fields = 'sheets(properties(sheetId,title),charts(chartId,spec(title)))';
   const res = await withRetry('sheets.get', () =>
@@ -104,7 +67,6 @@ async function getSheetsAndCharts() {
   return byTitle;
 }
 
-/** Descarga un chart incrustado como PNG (usa gid=sheetId y oid=chartId). */
 async function downloadChartPNG({ sheetId, chartId, accessToken }) {
   const url = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/export?format=png&gid=${sheetId}&oid=${chartId}`;
   const res = await withRetry(`fetch chart gid=${sheetId} oid=${chartId}`, () =>
@@ -112,47 +74,40 @@ async function downloadChartPNG({ sheetId, chartId, accessToken }) {
   );
   if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
   const buf = Buffer.from(await res.arrayBuffer());
-  if (buf.length < 1000) throw new Error('PNG demasiado pequeño (permiso o chart inexistente)');
+  if (buf.length < 1000) throw new Error('PNG demasiado pequeño');
   return buf;
 }
 
-/** Convierte PNG → PDF (A4, 1 página), manteniendo proporción y centrado. */
 function pngToPDFBuffer(pngBuffer) {
   const { width, height } = imageSize(pngBuffer) || {};
   const landscape = (width && height) ? width >= height : true;
-
   const pdf = new PDFDocument({ size: 'A4', layout: landscape ? 'landscape' : 'portrait', autoFirstPage: false });
   const chunks = [];
   pdf.on('data', d => chunks.push(d));
   const done = new Promise(resolve => pdf.on('end', () => resolve(Buffer.concat(chunks))));
-
   pdf.addPage();
   const page = pdf.page;
-  const maxW = page.width  - page.margins.left - page.margins.right;
-  const maxH = page.height - page.margins.top  - page.margins.bottom;
-
+  const maxW = page.width - page.margins.left - page.margins.right;
+  const maxH = page.height - page.margins.top - page.margins.bottom;
   let drawW = maxW, drawH = maxH;
   if (width && height) {
     const scale = Math.min(maxW / width, maxH / height);
-    drawW = Math.floor(width  * scale);
+    drawW = Math.floor(width * scale);
     drawH = Math.floor(height * scale);
   }
   const x = page.margins.left + (maxW - drawW) / 2;
-  const y = page.margins.top  + (maxH - drawH) / 2;
-
+  const y = page.margins.top + (maxH - drawH) / 2;
   pdf.image(pngBuffer, x, y, { width: drawW, height: drawH });
   pdf.end();
   return done;
 }
 
-/** Asegura subcarpeta YYYY-MM-DD bajo la carpeta de la tienda. Devuelve su id. */
 async function ensureDatedSubfolder(parentId, dateStr) {
   const q = `name='${dateStr}' and mimeType='application/vnd.google-apps.folder' and '${parentId}' in parents and trashed=false`;
   const found = await withRetry('drive.list datedFolder', () =>
     driveApi.files.list({ q, fields: 'files(id,name)', spaces: 'drive', pageSize: 1 })
   );
   if (found.data.files?.length) return found.data.files[0].id;
-
   const folder = await withRetry('drive.create datedFolder', () =>
     driveApi.files.create({
       requestBody: { name: dateStr, mimeType: 'application/vnd.google-apps.folder', parents: [parentId] },
@@ -162,7 +117,6 @@ async function ensureDatedSubfolder(parentId, dateStr) {
   return folder.data.id;
 }
 
-/** Sube un buffer PDF a Drive. */
 async function uploadPDF({ parentId, name, pdfBuffer }) {
   await withRetry(`drive.upload ${name}`, () =>
     driveApi.files.create({
@@ -173,15 +127,14 @@ async function uploadPDF({ parentId, name, pdfBuffer }) {
   );
 }
 
-/* =======================
- *  MAIN
- * ======================= */
+/* ===== MAIN ===== */
 async function main() {
-  // Token para descargar los PNG
-  const accessToken = await auth.getAccessToken();
-  if (!accessToken) { console.error('❌ Sin accessToken'); process.exit(1); }
+  // Access Token (para descargar PNG)
+  const client = await auth.getClient();
+  const accessToken = await client.getAccessToken();
+  const token = typeof accessToken === 'string' ? accessToken : accessToken?.token;
+  if (!token) { console.error('❌ No se pudo obtener accessToken'); process.exit(1); }
 
-  // Mapa título→(sheetId, charts[])
   const byTitle = await getSheetsAndCharts();
   const limit = pLimit(CONCURRENCY);
   let total = 0;
@@ -192,12 +145,8 @@ async function main() {
     if (!sh.charts?.length) { console.log(`ℹ️ ${tienda} / ${sheetName}: sin gráficos incrustados`); continue; }
 
     let dateFolderId;
-    try {
-      dateFolderId = await ensureDatedSubfolder(folderId, DATE_STR);
-    } catch (e) {
-      console.log(`❌ Carpeta destino de ${tienda} inválida: ${e.message || e}`); 
-      continue;
-    }
+    try { dateFolderId = await ensureDatedSubfolder(folderId, DATE_STR); }
+    catch (e) { console.log(`❌ Carpeta destino de ${tienda} inválida: ${e.message || e}`); continue; }
 
     console.log(`🗂️ ${tienda} / ${sheetName}: ${sh.charts.length} gráficos → ${DATE_STR}`);
 
@@ -206,7 +155,7 @@ async function main() {
       const title = (c.title || `${FILE_PREFIX}_${idx}`).replace(/[\\/:*?"<>|]/g, '_').slice(0, 80);
       const fileName = `${tienda}__${title}__${DATE_STR}.pdf`;
       try {
-        const png = await downloadChartPNG({ sheetId: sh.sheetId, chartId: c.chartId, accessToken });
+        const png = await downloadChartPNG({ sheetId: sh.sheetId, chartId: c.chartId, accessToken: token });
         const pdf = await pngToPDFBuffer(png);
         await uploadPDF({ parentId: dateFolderId, name: fileName, pdfBuffer: pdf });
         console.log(`📄 OK ${tienda} → ${fileName}`);
