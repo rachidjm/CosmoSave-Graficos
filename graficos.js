@@ -176,11 +176,21 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
   return chartElemId;
 }
 
+// 🔧 CORREGIDO: usar stream y convertir a Buffer
 async function exportPresentationPDF(presId) {
   const res = await withRetry('drive.export(pdf)', () =>
-    driveApi.files.export({ fileId: presId, mimeType: 'application/pdf' }, { responseType: 'arraybuffer' })
+    driveApi.files.export(
+      { fileId: presId, mimeType: 'application/pdf' },
+      { responseType: 'stream' } // ✅ stream, no arraybuffer
+    )
   );
-  return Buffer.from(res.data);
+
+  const chunks = [];
+  return await new Promise((resolve, reject) => {
+    res.data.on('data', chunk => chunks.push(chunk));
+    res.data.on('end', () => resolve(Buffer.concat(chunks)));
+    res.data.on('error', reject);
+  });
 }
 
 async function deletePageElement(presId, objectId) {
@@ -192,12 +202,11 @@ async function deletePageElement(presId, objectId) {
   );
 }
 
-// 🔧 FIX: usar directamente pdfBuffer
 async function uploadPDF({ parentId, name, pdfBuffer }) {
   await withRetry(`drive.upload ${name}`, () =>
     driveApi.files.create({
       requestBody: { name, parents: [parentId], mimeType: 'application/pdf' },
-      media: { mimeType: 'application/pdf', body: pdfBuffer }, // ✅ CORREGIDO
+      media: { mimeType: 'application/pdf', body: pdfBuffer }, // ✅ correcto
       fields: 'id',
       supportsAllDrives: true,
     })
