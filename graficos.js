@@ -5,7 +5,7 @@ import pLimit from 'p-limit';
 
 /**
  * Exporta TODOS los gráficos incrustados de las pestañas indicadas:
- * 1) Crea UNA presentación temporal en Slides
+ * 1) Crea UNA presentación temporal en Slides (dentro de PTC)
  * 2) Inserta el gráfico desde Sheets (createSheetsChart)
  * 3) Ajusta a toda la página
  * 4) Exporta a PDF con Drive.files.export
@@ -33,8 +33,11 @@ const TIENDAS = {
   PERSONALES:      { sheetName: 'GRAFICOS PERSONALES', folderId: '1cwLOPdclOxy47Bkp7dwvhzHLIIjB4svO' },
 };
 
+// 📂 Carpeta PTC para presentaciones temporales
+const TEMP_FOLDER_ID = '18vTs2um4CCqnI1OKWfBdM5_bnqLSeSJO';
+
 const FILE_PREFIX  = 'Grafico';
-const DATE_STR     = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+const DATE_STR     = new Date().toISOString().slice(0, 10);
 const CONCURRENCY  = 2;
 const MAX_RETRIES  = 5;
 
@@ -42,7 +45,7 @@ const SCOPES = [
   'https://www.googleapis.com/auth/spreadsheets.readonly',
   'https://www.googleapis.com/auth/drive',
   'https://www.googleapis.com/auth/drive.file',
-  'https://www.googleapis.com/auth/presentations', // Slides API
+  'https://www.googleapis.com/auth/presentations',
 ];
 
 const auth = new google.auth.GoogleAuth({ scopes: SCOPES });
@@ -50,7 +53,7 @@ const sheetsApi = google.sheets({ version: 'v4', auth });
 const driveApi  = google.drive({ version: 'v3', auth });
 const slidesApi = google.slides({ version: 'v1', auth });
 
-// 🔎 --- AÑADIDO: Mostrar el projectId de las credenciales ---
+// 🔎 Debug: mostrar projectId de las credenciales
 (async () => {
   try {
     const pid = await auth.getProjectId();
@@ -59,7 +62,6 @@ const slidesApi = google.slides({ version: 'v1', auth });
     console.error('❌ No se pudo obtener projectId de las credenciales:', err.message);
   }
 })();
-// ----------------------------------------------------------------
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 async function withRetry(tag, fn) {
@@ -106,12 +108,26 @@ async function ensureDatedSubfolder(parentId, dateStr) {
   return folder.data.id;
 }
 
-/** Crea presentación temporal con una slide en blanco y devuelve info de tamaño. */
+/** Crear presentación temporal en carpeta PTC */
 async function createTempPresentation(name) {
-  const pres = await withRetry('slides.create', () =>
-    slidesApi.presentations.create({ requestBody: { title: name } })
+  // 1. Crear presentación vacía en PTC vía Drive API
+  const file = await withRetry('drive.create presentation', () =>
+    driveApi.files.create({
+      requestBody: {
+        name,
+        mimeType: 'application/vnd.google-apps.presentation',
+        parents: [TEMP_FOLDER_ID],
+      },
+      fields: 'id',
+    })
   );
-  const presId = pres.data.presentationId;
+  const presId = file.data.id;
+
+  // 2. Leer presentación con Slides API
+  const pres = await withRetry('slides.get', () =>
+    slidesApi.presentations.get({ presentationId: presId })
+  );
+
   const slideId = pres.data.slides?.[0]?.objectId;
   const pgW = pres.data.pageSize?.width?.magnitude || 960;
   const pgH = pres.data.pageSize?.height?.magnitude || 540;
@@ -130,9 +146,7 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
         linkingMode: 'LINKED'
       }
     },
-    {
-      insertSlidesObject: { objectId: chartElemId, slideObjectId: slideId }
-    }
+    { insertSlidesObject: { objectId: chartElemId, slideObjectId: slideId } }
   ];
 
   await withRetry('slides.batchUpdate:createChart', () =>
@@ -163,7 +177,8 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
               objectId: chartElemId,
               applyMode: 'ABSOLUTE',
               transform: {
-                scaleX: 1, scaleY: 1, shearX: 0, shearY: 0,
+                scaleX: 1, scaleY: 1,
+                shearX: 0, shearY: 0,
                 translateX: margin, translateY: margin, unit: 'PT'
               }
             }
