@@ -2,11 +2,14 @@
   "name": "cosmosave-analytics",
   "version": "1.0.0",
   "type": "module",
-  "main": "index.js",
+  "main": "graficos.js",
   "license": "MIT",
-  "scripts": { "start": "node index.js" },
+  "scripts": { 
+    "start": "node graficos.js" 
+  },
   "dependencies": {
     "googleapis": "^131.0.0",
-    "dotenv": "^16.4.5"
+    "dotenv": "^16.4.5",
+    "p-limit": "^5.0.0"
   }
 }
