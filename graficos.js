@@ -35,7 +35,7 @@ const TIENDAS = {
 
 const FILE_PREFIX  = 'Grafico';
 const DATE_STR     = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-const CONCURRENCY  = 2;   // inserción+export PDF es más pesado; 2 es seguro
+const CONCURRENCY  = 2;
 const MAX_RETRIES  = 5;
 
 const SCOPES = [
@@ -49,6 +49,17 @@ const auth = new google.auth.GoogleAuth({ scopes: SCOPES });
 const sheetsApi = google.sheets({ version: 'v4', auth });
 const driveApi  = google.drive({ version: 'v3', auth });
 const slidesApi = google.slides({ version: 'v1', auth });
+
+// 🔎 --- AÑADIDO: Mostrar el projectId de las credenciales ---
+(async () => {
+  try {
+    const pid = await auth.getProjectId();
+    console.log(`🔎 Credenciales usando projectId: ${pid}`);
+  } catch (err) {
+    console.error('❌ No se pudo obtener projectId de las credenciales:', err.message);
+  }
+})();
+// ----------------------------------------------------------------
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 async function withRetry(tag, fn) {
@@ -108,7 +119,6 @@ async function createTempPresentation(name) {
   return { presId, slideId, pgW, pgH };
 }
 
-/** Inserta un Sheets Chart en la slide (como elemento enlazado) y lo ajusta a toda la página. */
 async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
   const chartElemId = `chart_${chartId}_${Date.now()}`;
   const requests = [
@@ -121,11 +131,7 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
       }
     },
     {
-      // Mover el chart a la slide destino
-      insertSlidesObject: {
-        objectId: chartElemId,
-        slideObjectId: slideId
-      }
+      insertSlidesObject: { objectId: chartElemId, slideObjectId: slideId }
     }
   ];
 
@@ -136,7 +142,6 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
     })
   );
 
-  // Tamaño y posición para ocupar toda la página (con pequeños márgenes)
   const margin = 10;
   await withRetry('slides.batchUpdate:fit', () =>
     slidesApi.presentations.batchUpdate({
@@ -171,7 +176,6 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
   return chartElemId;
 }
 
-/** Exporta la presentación a PDF (una página) y devuelve Buffer. */
 async function exportPresentationPDF(presId) {
   const res = await withRetry('drive.export(pdf)', () =>
     driveApi.files.export({ fileId: presId, mimeType: 'application/pdf' }, { responseType: 'arraybuffer' })
@@ -179,7 +183,6 @@ async function exportPresentationPDF(presId) {
   return Buffer.from(res.data);
 }
 
-/** Borra el elemento de la slide para reutilizarla con el siguiente chart. */
 async function deletePageElement(presId, objectId) {
   await withRetry('slides.batchUpdate:deleteElement', () =>
     slidesApi.presentations.batchUpdate({
@@ -189,7 +192,6 @@ async function deletePageElement(presId, objectId) {
   );
 }
 
-/** Envía el PDF a la carpeta destino. */
 async function uploadPDF({ parentId, name, pdfBuffer }) {
   await withRetry(`drive.upload ${name}`, () =>
     driveApi.files.create({
@@ -201,12 +203,10 @@ async function uploadPDF({ parentId, name, pdfBuffer }) {
 }
 
 async function main() {
-  // Comprobación mínima de acceso (token)
   const client = await auth.getClient();
   const token = await client.getAccessToken();
   if (!token) { console.error('❌ No se pudo obtener token'); process.exit(1); }
 
-  // Mapa título -> charts
   const byTitle = await getSheetsAndCharts();
 
   const limit = pLimit(CONCURRENCY);
@@ -218,44 +218,33 @@ async function main() {
     const charts = sh.charts || [];
     if (!charts.length) { console.log(`ℹ️ ${tienda} / ${sheetName}: sin gráficos incrustados`); continue; }
 
-    // Subcarpeta por fecha
     let dateFolderId;
     try { dateFolderId = await ensureDatedSubfolder(folderId, DATE_STR); }
     catch (e) { console.log(`❌ Carpeta destino de ${tienda} inválida: ${e.message || e}`); continue; }
 
     console.log(`🗂️ ${tienda} / ${sheetName}: ${charts.length} gráficos → ${DATE_STR}`);
 
-    // 1 presentación temporal por tienda
     const { presId, slideId, pgW, pgH } = await createTempPresentation(`TMP_${tienda}__${DATE_STR}`);
 
-    // Procesamos gráficos (limit de concurrencia bajo)
     await Promise.all(charts.map((c, i) => limit(async () => {
       const idx = i + 1;
       const title = (c.title || `${FILE_PREFIX}_${idx}`).replace(/[\\/:*?"<>|]/g, '_').slice(0, 80);
       const fileName = `${tienda}__${title}__${DATE_STR}.pdf`;
 
       try {
-        // Inserta chart enlazado y ajusta
         const objId = await insertChartAndFit({ presId, slideId, chartId: c.chartId, pgW, pgH });
-
-        // Exporta la presentación a PDF (1 página)
         const pdf = await exportPresentationPDF(presId);
-
-        // Sube PDF a Drive
         await uploadPDF({ parentId: dateFolderId, name: fileName, pdfBuffer: pdf });
-
-        // Elimina el elemento para reutilizar la slide
         await deletePageElement(presId, objId);
 
         console.log(`📄 OK ${tienda} → ${fileName}`);
         total++;
-        await sleep(200); // respiro
+        await sleep(200);
       } catch (e) {
         console.log(`❌ Falló ${tienda} chart#${idx} (${title}): ${e.message || e}`);
       }
     })));
 
-    // Envía la presentación a la papelera
     try {
       await withRetry('drive.trash pres', () =>
         driveApi.files.update({ fileId: presId, requestBody: { trashed: true } })
