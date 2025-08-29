@@ -6,6 +6,28 @@ import pLimit from 'p-limit';
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
 if (!SPREADSHEET_ID) { console.error('❌ Falta SPREADSHEET_ID'); process.exit(1); }
 
+// --- OAuth de USUARIO (no Service Account) ---
+const OAUTH_CLIENT_ID = process.env.GOOGLE_OAUTH_CLIENT_ID;
+const OAUTH_CLIENT_SECRET = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
+const OAUTH_REFRESH_TOKEN = process.env.GOOGLE_OAUTH_REFRESH_TOKEN;
+if (!OAUTH_CLIENT_ID || !OAUTH_CLIENT_SECRET || !OAUTH_REFRESH_TOKEN) {
+  console.error('❌ Faltan variables OAuth: GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET / GOOGLE_OAUTH_REFRESH_TOKEN');
+  process.exit(1);
+}
+const oAuth2Client = new google.auth.OAuth2(
+  OAUTH_CLIENT_ID,
+  OAUTH_CLIENT_SECRET,
+  'http://localhost:3000/oauth2callback' // no se usa en Actions; no molesta
+);
+oAuth2Client.setCredentials({ refresh_token: OAUTH_REFRESH_TOKEN });
+
+const auth = oAuth2Client; // 👈 desde aquí, todo usa tu cuenta
+const sheetsApi = google.sheets({ version: 'v4', auth });
+const driveApi  = google.drive({ version: 'v3', auth });
+const slidesApi = google.slides({ version: 'v1', auth });
+
+// ---------------------------------------------
+
 const TIENDAS = {
   ARENAL:          { sheetName: 'Dashboard',           folderId: '16PALsypZSdXiiXIgA_xMex710usAZAAZ' },
   DRUNI:           { sheetName: 'Dashboard D',         folderId: '1GrDRvmo9lR0RaBIw6y69OdFGV4Ao3KGi' },
@@ -27,24 +49,6 @@ const FILE_PREFIX  = 'Grafico';
 const DATE_STR     = new Date().toISOString().slice(0, 10);
 const CONCURRENCY  = 2;
 const MAX_RETRIES  = 5;
-
-const SCOPES = [
-  'https://www.googleapis.com/auth/spreadsheets.readonly',
-  'https://www.googleapis.com/auth/drive',
-  'https://www.googleapis.com/auth/drive.file',
-  'https://www.googleapis.com/auth/presentations',
-];
-
-const auth = new google.auth.GoogleAuth({ scopes: SCOPES });
-const sheetsApi = google.sheets({ version: 'v4', auth });
-const driveApi  = google.drive({ version: 'v3', auth });
-const slidesApi = google.slides({ version: 'v1', auth });
-
-// Debug de proyecto activo
-(async () => {
-  try { console.log(`🔎 Credenciales usando projectId: ${await auth.getProjectId()}`); }
-  catch (err) { console.error('❌ No se pudo obtener projectId:', err.message); }
-})();
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 async function withRetry(tag, fn) {
@@ -185,9 +189,9 @@ async function uploadPDF({ parentId, name, pdfBuffer }) {
 }
 
 async function main() {
-  const client = await auth.getClient();
-  const token = await client.getAccessToken();
-  if (!token) { console.error('❌ No se pudo obtener token'); process.exit(1); }
+  // Comprobación mínima de token (opcional)
+  const { token } = await auth.getAccessToken();
+  if (!token) { console.error('❌ No se pudo obtener access token OAuth'); process.exit(1); }
 
   const byTitle = await getSheetsAndCharts();
 
