@@ -1,48 +1,28 @@
 name: Exportar gráficos Sheets a Drive
 
 on:
-  # Lánzalo a mano desde "Actions"
-  workflow_dispatch: {}
-  # Programa (déjalo comentado hasta probar):
-  # schedule:
-  #   - cron: "0 7 15,30 * *"    # 07:00 UTC ≈ 09:00 Madrid en verano
+  workflow_dispatch:
 
 jobs:
   export:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
 
     steps:
-      - name: Checkout
+      - name: Checkout repo
         uses: actions/checkout@v4
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: 22
 
-      - name: Instalar dependencias
-        run: |
-          npm i googleapis pdfkit node-fetch@3 p-limit image-size dotenv
-
-      # ⚠️ Escribir el JSON del SA sin parseos ni validación
-      - name: Escribir credenciales del SA a archivo
-        env:
-          SA_JSON: ${{ secrets.SA_JSON }}
-        run: |
-          python - <<'PY'
-          import os, sys
-          content = os.environ.get('SA_JSON', '')
-          # Escribimos tal cual (respetando saltos de línea)
-          with open('sa.json', 'w', encoding='utf-8') as f:
-            f.write(content)
-          # Mostrar un resumen seguro (sin exponer secretos)
-          print("sa.json escrito. Bytes:", len(content.encode('utf-8')))
-          PY
+      - name: Install deps
+        run: npm install
 
       - name: Ejecutar exportador
-        env:
-          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
-          GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/sa.json
         run: node graficos.js
+        env:
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
