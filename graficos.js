@@ -17,8 +17,11 @@ const TIENDAS = {
   PERSONALES:      { sheetName: 'GRAFICOS PERSONALES', folderId: '1cwLOPdclOxy47Bkp7dwvhzHLIIjB4svO' },
 };
 
-// 📂 Carpeta PTC en TU Drive personal
+// 📂 Carpeta PTC en TU Drive personal (presentaciones temporales)
 const TEMP_FOLDER_ID = '18vTs2um4CCqnI1OKWfBdM5_bnqLSeSJO';
+
+// 🧩 ID de la plantilla en PTC (tu enlace)
+const TEMPLATE_PRESENTATION_ID = '1YrKAl9DlHncNcP-ZxQMvuH8RO4Sbwx-jL0zfeUd9pHM';
 
 const FILE_PREFIX  = 'Grafico';
 const DATE_STR     = new Date().toISOString().slice(0, 10);
@@ -37,13 +40,10 @@ const sheetsApi = google.sheets({ version: 'v4', auth });
 const driveApi  = google.drive({ version: 'v3', auth });
 const slidesApi = google.slides({ version: 'v1', auth });
 
+// Debug de proyecto activo
 (async () => {
-  try {
-    const pid = await auth.getProjectId();
-    console.log(`🔎 Credenciales usando projectId: ${pid}`);
-  } catch (err) {
-    console.error('❌ No se pudo obtener projectId de las credenciales:', err.message);
-  }
+  try { console.log(`🔎 Credenciales usando projectId: ${await auth.getProjectId()}`); }
+  catch (err) { console.error('❌ No se pudo obtener projectId:', err.message); }
 })();
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -52,8 +52,8 @@ async function withRetry(tag, fn) {
   for (let i = 1; i <= MAX_RETRIES; i++) {
     try { return await fn(); }
     catch (e) {
-      if (i === MAX_RETRIES) throw new Error(`${tag}: ${e.message || e}`);
-      console.log(`↻ Retry ${i}/${MAX_RETRIES} ${tag} en ${wait}ms: ${e.message || e}`);
+      if (i === MAX_RETRIES) throw new Error(`${tag}: ${e?.message || e}`);
+      console.log(`↻ Retry ${i}/${MAX_RETRIES} ${tag} en ${wait}ms: ${e?.message || e}`);
       await sleep(wait + Math.floor(Math.random() * 300));
       wait = Math.min(wait * 2, 8000);
     }
@@ -78,7 +78,7 @@ async function getSheetsAndCharts() {
 async function ensureDatedSubfolder(parentId, dateStr) {
   const q = `name='${dateStr}' and mimeType='application/vnd.google-apps.folder' and '${parentId}' in parents and trashed=false`;
   const found = await withRetry('drive.list datedFolder', () =>
-    driveApi.files.list({ q, fields: 'files(id,name)', spaces: 'drive', pageSize: 1 })
+    driveApi.files.list({ q, fields: 'files(id,name)', spaces: 'drive', pageSize: 1, supportsAllDrives: true })
   );
   if (found.data.files?.length) return found.data.files[0].id;
 
@@ -86,23 +86,20 @@ async function ensureDatedSubfolder(parentId, dateStr) {
     driveApi.files.create({
       requestBody: { name: dateStr, mimeType: 'application/vnd.google-apps.folder', parents: [parentId] },
       fields: 'id,name',
-      supportsAllDrives: true,   // 👈 importante
+      supportsAllDrives: true,
     })
   );
   return folder.data.id;
 }
 
-/** Crear presentación temporal directamente en TU carpeta PTC */
+/** Crear presentación temporal como COPIA de la plantilla en PTC (tu Drive personal) */
 async function createTempPresentation(name) {
-  const file = await withRetry('drive.create presentation', () =>
-    driveApi.files.create({
-      requestBody: {
-        name,
-        mimeType: 'application/vnd.google-apps.presentation',
-        parents: [TEMP_FOLDER_ID],   // 👈 fuerza a PTC
-      },
+  const file = await withRetry('drive.copy presentation', () =>
+    driveApi.files.copy({
+      fileId: TEMPLATE_PRESENTATION_ID,
+      requestBody: { name, parents: [TEMP_FOLDER_ID] }, // se crea en PTC
       fields: 'id',
-      supportsAllDrives: true,       // 👈 clave para que no use el Drive de la SA
+      supportsAllDrives: true,
     })
   );
   const presId = file.data.id;
@@ -121,22 +118,12 @@ async function createTempPresentation(name) {
 async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
   const chartElemId = `chart_${chartId}_${Date.now()}`;
   const requests = [
-    {
-      createSheetsChart: {
-        objectId: chartElemId,
-        spreadsheetId: SPREADSHEET_ID,
-        chartId,
-        linkingMode: 'LINKED'
-      }
-    },
+    { createSheetsChart: { objectId: chartElemId, spreadsheetId: SPREADSHEET_ID, chartId, linkingMode: 'LINKED' } },
     { insertSlidesObject: { objectId: chartElemId, slideObjectId: slideId } }
   ];
 
   await withRetry('slides.batchUpdate:createChart', () =>
-    slidesApi.presentations.batchUpdate({
-      presentationId: presId,
-      requestBody: { requests }
-    })
+    slidesApi.presentations.batchUpdate({ presentationId: presId, requestBody: { requests } })
   );
 
   const margin = 10;
@@ -159,11 +146,7 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
             updatePageElementTransform: {
               objectId: chartElemId,
               applyMode: 'ABSOLUTE',
-              transform: {
-                scaleX: 1, scaleY: 1,
-                shearX: 0, shearY: 0,
-                translateX: margin, translateY: margin, unit: 'PT'
-              }
+              transform: { scaleX: 1, scaleY: 1, shearX: 0, shearY: 0, translateX: margin, translateY: margin, unit: 'PT' }
             }
           }
         ]
@@ -244,6 +227,7 @@ async function main() {
       }
     })));
 
+    // Borrar la copia temporal de PTC
     try {
       await withRetry('drive.delete pres', () =>
         driveApi.files.delete({ fileId: presId, supportsAllDrives: true })
