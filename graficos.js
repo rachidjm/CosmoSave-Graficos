@@ -17,7 +17,7 @@ const TIENDAS = {
   PERSONALES:      { sheetName: 'GRAFICOS PERSONALES', folderId: '1cwLOPdclOxy47Bkp7dwvhzHLIIjB4svO' },
 };
 
-// 📂 Carpeta PTC para presentaciones temporales
+// 📂 Carpeta PTC de tu Drive personal para temporales
 const TEMP_FOLDER_ID = '18vTs2um4CCqnI1OKWfBdM5_bnqLSeSJO';
 
 const FILE_PREFIX  = 'Grafico';
@@ -91,20 +91,22 @@ async function ensureDatedSubfolder(parentId, dateStr) {
   return folder.data.id;
 }
 
-/** Crear presentación temporal en carpeta PTC */
+/** Crear presentación temporal en carpeta PTC (tu Drive personal) */
 async function createTempPresentation(name) {
+  // Crear presentación en TU carpeta PTC
   const file = await withRetry('drive.create presentation', () =>
     driveApi.files.create({
       requestBody: {
         name,
         mimeType: 'application/vnd.google-apps.presentation',
-        parents: [TEMP_FOLDER_ID],
+        parents: [TEMP_FOLDER_ID],   // 👈 fuerza a PTC
       },
       fields: 'id',
     })
   );
   const presId = file.data.id;
 
+  // Leer la presentación con Slides API
   const pres = await withRetry('slides.get', () =>
     slidesApi.presentations.get({ presentationId: presId })
   );
@@ -198,37 +200,10 @@ async function uploadPDF({ parentId, name, pdfBuffer }) {
   );
 }
 
-/** 🔥 Limpieza automática: borrar todo lo viejo en PTC antes de empezar */
-async function cleanupTempFolder() {
-  const res = await driveApi.files.list({
-    q: `'${TEMP_FOLDER_ID}' in parents and mimeType='application/vnd.google-apps.presentation' and trashed=false`,
-    fields: 'files(id,name)',
-    pageSize: 1000,
-  });
-
-  if (!res.data.files?.length) {
-    console.log('🧹 Carpeta PTC limpia');
-    return;
-  }
-
-  console.log(`🧹 Borrando ${res.data.files.length} presentaciones antiguas de PTC...`);
-  for (const f of res.data.files) {
-    try {
-      await driveApi.files.delete({ fileId: f.id });
-      console.log(`🗑️ Eliminada: ${f.name}`);
-    } catch (e) {
-      console.log(`⚠️ No se pudo borrar ${f.name}: ${e.message}`);
-    }
-  }
-}
-
 async function main() {
   const client = await auth.getClient();
   const token = await client.getAccessToken();
   if (!token) { console.error('❌ No se pudo obtener token'); process.exit(1); }
-
-  // 🔥 limpiar PTC al arrancar
-  await cleanupTempFolder();
 
   const byTitle = await getSheetsAndCharts();
 
@@ -268,7 +243,7 @@ async function main() {
       }
     })));
 
-    // borrar presentación temporal al final del loop
+    // borrar presentación temporal de PTC al acabar
     try {
       await withRetry('drive.delete pres', () =>
         driveApi.files.delete({ fileId: presId })
