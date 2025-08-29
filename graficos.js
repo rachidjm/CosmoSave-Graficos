@@ -130,6 +130,7 @@ async function createTempPresentation(name) {
   return { presId, slideId, pgW, pgH };
 }
 
+// ✅ FIX: ahora los gráficos ocupan toda la slide con márgenes
 async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
   const chartElemId = `chart_${chartId}_${Date.now()}`;
 
@@ -151,8 +152,13 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
                   width:  { magnitude: pgW, unit: 'PT' }
                 },
                 transform: {
-                  scaleX: 1, scaleY: 1, shearX: 0, shearY: 0,
-                  translateX: 0, translateY: 0, unit: 'PT'
+                  scaleX: 1,
+                  scaleY: 1,
+                  shearX: 0,
+                  shearY: 0,
+                  translateX: 0,
+                  translateY: 0,
+                  unit: 'PT'
                 }
               }
             }
@@ -162,7 +168,8 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
     })
   );
 
-  const margin = 10;
+  // ocupar casi toda la slide con márgenes de 20pt
+  const margin = 20;
   await withRetry('slides.batchUpdate:fit', () =>
     slidesApi.presentations.batchUpdate({
       presentationId: presId,
@@ -175,8 +182,11 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
               transform: {
                 scaleX: (pgW - 2 * margin) / pgW,
                 scaleY: (pgH - 2 * margin) / pgH,
-                shearX: 0, shearY: 0,
-                translateX: margin, translateY: margin, unit: 'PT'
+                shearX: 0,
+                shearY: 0,
+                translateX: margin,
+                translateY: margin,
+                unit: 'PT'
               }
             }
           }
@@ -213,7 +223,7 @@ async function deletePageElement(presId, objectId) {
   );
 }
 
-// 🔧 FIX: convertir Buffer en ReadableStream
+// convertir Buffer en ReadableStream
 function bufferToStream(buffer) {
   return new Readable({
     read() {
@@ -227,7 +237,7 @@ async function uploadPDF({ parentId, name, pdfBuffer }) {
   await withRetry(`drive.upload ${name}`, () =>
     driveApi.files.create({
       requestBody: { name, parents: [parentId], mimeType: 'application/pdf' },
-      media: { mimeType: 'application/pdf', body: bufferToStream(pdfBuffer) }, // ✅ stream válido
+      media: { mimeType: 'application/pdf', body: bufferToStream(pdfBuffer) },
       fields: 'id',
       supportsAllDrives: true,
     })
