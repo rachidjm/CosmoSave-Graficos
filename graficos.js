@@ -26,8 +26,6 @@ const sheetsApi = google.sheets({ version: 'v4', auth });
 const driveApi  = google.drive({ version: 'v3', auth });
 const slidesApi = google.slides({ version: 'v1', auth });
 
-// ---------------------------------------------
-
 const TIENDAS = {
   ARENAL:          { sheetName: 'Dashboard',           folderId: '16PALsypZSdXiiXIgA_xMex710usAZAAZ' },
   DRUNI:           { sheetName: 'Dashboard D',         folderId: '1GrDRvmo9lR0RaBIw6y69OdFGV4Ao3KGi' },
@@ -123,7 +121,7 @@ async function createTempPresentation(name) {
 async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
   const chartElemId = `chart_${chartId}_${Date.now()}`;
 
-  // 1. Crear el chart enlazado
+  // 1. Crear el chart enlazado con elementProperties (para evitar UNIT_UNSPECIFIED)
   await withRetry('slides.batchUpdate:createChart', () =>
     slidesApi.presentations.batchUpdate({
       presentationId: presId,
@@ -134,7 +132,18 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
               objectId: chartElemId,
               spreadsheetId: SPREADSHEET_ID,
               chartId: chartId,
-              linkingMode: 'LINKED'
+              linkingMode: 'LINKED',
+              elementProperties: {
+                pageObjectId: slideId,
+                size: {
+                  height: { magnitude: pgH, unit: 'PT' },
+                  width:  { magnitude: pgW, unit: 'PT' }
+                },
+                transform: {
+                  scaleX: 1, scaleY: 1, shearX: 0, shearY: 0,
+                  translateX: 0, translateY: 0, unit: 'PT'
+                }
+              }
             }
           }
         ]
@@ -142,7 +151,7 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
     })
   );
 
-  // 2. Ajustar tamaño y posición
+  // 2. Ajustar tamaño y posición después (con márgenes)
   const margin = 10;
   await withRetry('slides.batchUpdate:fit', () =>
     slidesApi.presentations.batchUpdate({
