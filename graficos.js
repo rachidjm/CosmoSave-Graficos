@@ -6,7 +6,7 @@ import pLimit from 'p-limit';
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
 if (!SPREADSHEET_ID) { console.error('❌ Falta SPREADSHEET_ID'); process.exit(1); }
 
-// --- OAuth de USUARIO (no Service Account) ---
+// --- OAuth de USUARIO ---
 const OAUTH_CLIENT_ID = process.env.GOOGLE_OAUTH_CLIENT_ID;
 const OAUTH_CLIENT_SECRET = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
 const OAUTH_REFRESH_TOKEN = process.env.GOOGLE_OAUTH_REFRESH_TOKEN;
@@ -17,11 +17,11 @@ if (!OAUTH_CLIENT_ID || !OAUTH_CLIENT_SECRET || !OAUTH_REFRESH_TOKEN) {
 const oAuth2Client = new google.auth.OAuth2(
   OAUTH_CLIENT_ID,
   OAUTH_CLIENT_SECRET,
-  'http://localhost:3000/oauth2callback' // no se usa en Actions; no molesta
+  'http://localhost:3000/oauth2callback'
 );
 oAuth2Client.setCredentials({ refresh_token: OAUTH_REFRESH_TOKEN });
 
-const auth = oAuth2Client; // 👈 desde aquí, todo usa tu cuenta
+const auth = oAuth2Client;
 const sheetsApi = google.sheets({ version: 'v4', auth });
 const driveApi  = google.drive({ version: 'v3', auth });
 const slidesApi = google.slides({ version: 'v1', auth });
@@ -101,7 +101,7 @@ async function createTempPresentation(name) {
   const file = await withRetry('drive.copy presentation', () =>
     driveApi.files.copy({
       fileId: TEMPLATE_PRESENTATION_ID,
-      requestBody: { name, parents: [TEMP_FOLDER_ID] }, // se crea en PTC
+      requestBody: { name, parents: [TEMP_FOLDER_ID] },
       fields: 'id',
       supportsAllDrives: true,
     })
@@ -122,8 +122,14 @@ async function createTempPresentation(name) {
 async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
   const chartElemId = `chart_${chartId}_${Date.now()}`;
   const requests = [
-    { createSheetsChart: { objectId: chartElemId, spreadsheetId: SPREADSHEET_ID, chartId, linkingMode: 'LINKED' } },
-    { insertSlidesObject: { objectId: chartElemId, slideObjectId: slideId } }
+    {
+      createSheetsChart: {
+        objectId: chartElemId,
+        spreadsheetId: SPREADSHEET_ID,
+        chartId,
+        linkingMode: 'LINKED'
+      }
+    }
   ];
 
   await withRetry('slides.batchUpdate:createChart', () =>
@@ -189,7 +195,6 @@ async function uploadPDF({ parentId, name, pdfBuffer }) {
 }
 
 async function main() {
-  // Comprobación mínima de token (opcional)
   const { token } = await auth.getAccessToken();
   if (!token) { console.error('❌ No se pudo obtener access token OAuth'); process.exit(1); }
 
@@ -231,7 +236,6 @@ async function main() {
       }
     })));
 
-    // Borrar la copia temporal de PTC
     try {
       await withRetry('drive.delete pres', () =>
         driveApi.files.delete({ fileId: presId, supportsAllDrives: true })
