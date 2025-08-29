@@ -25,6 +25,7 @@ oAuth2Client.setCredentials({ refresh_token: OAUTH_REFRESH_TOKEN });
 const auth = oAuth2Client;
 const sheetsApi = google.sheets({ version: 'v4', auth });
 const driveApi  = google.drive({ version: 'v3', auth });
+const slidesApi = google.slides({ version: 'v1', auth });
 
 const TIENDAS = {
   ARENAL:          { sheetName: 'Dashboard',           folderId: '16PALsypZSdXiiXIgA_xMex710usAZAAZ' },
@@ -36,6 +37,12 @@ const TIENDAS = {
   PACOPERFUMERIAS: { sheetName: 'Dashboard PF',        folderId: '1AtdZilQVDTJvFe1T09z102XQNZK8O49J' },
   PERSONALES:      { sheetName: 'GRAFICOS PERSONALES', folderId: '1cwLOPdclOxy47Bkp7dwvhzHLIIjB4svO' },
 };
+
+// 📂 Carpeta PTC en TU Drive personal (presentaciones temporales)
+const TEMP_FOLDER_ID = '18vTs2um4CCqnI1OKWfBdM5_bnqLSeSJO';
+
+// 🧩 ID de la plantilla en PTC
+const TEMPLATE_PRESENTATION_ID = '1YrKAl9DlHncNcP-ZxQMvuH8RO4Sbwx-jL0zfeUd9pHM';
 
 const FILE_PREFIX  = 'Grafico';
 const DATE_STR     = new Date().toISOString().slice(0, 10);
@@ -69,14 +76,13 @@ async function getSheetsAndCharts() {
     if (!title) return;
     if (!title.startsWith('Dashboard') && title !== 'GRAFICOS PERSONALES') return;
 
-    const sheetId = sh.properties?.sheetId;
     const charts = (sh.charts || []).map(c => ({
       chartId: c.chartId,
       title: c.spec?.title || ''
     }));
 
     if (charts.length) {
-      byTitle.set(title, { sheetId, title, charts });
+      byTitle.set(title, { title, charts });
     }
   });
 
@@ -100,11 +106,67 @@ async function ensureDatedSubfolder(parentId, dateStr) {
   return folder.data.id;
 }
 
-// 📤 Exportar un gráfico directo de Sheets como PDF
-async function exportChartPDF(spreadsheetId, chartId) {
-  const res = await withRetry(`drive.export chart#${chartId}`, () =>
+async function createTempPresentation(name) {
+  const file = await withRetry('drive.copy presentation', () =>
+    driveApi.files.copy({
+      fileId: TEMPLATE_PRESENTATION_ID,
+      requestBody: { name, parents: [TEMP_FOLDER_ID] },
+      fields: 'id',
+      supportsAllDrives: true,
+    })
+  );
+  const presId = file.data.id;
+
+  const pres = await withRetry('slides.get', () =>
+    slidesApi.presentations.get({ presentationId: presId })
+  );
+
+  const slideId = pres.data.slides?.[0]?.objectId;
+  const pgW = pres.data.pageSize?.width?.magnitude || 960;
+  const pgH = pres.data.pageSize?.height?.magnitude || 540;
+  if (!slideId) throw new Error('No se pudo obtener slideId inicial');
+  return { presId, slideId, pgW, pgH };
+}
+
+async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
+  const chartElemId = `chart_${chartId}_${Date.now()}`;
+
+  await withRetry('slides.batchUpdate:createChart', () =>
+    slidesApi.presentations.batchUpdate({
+      presentationId: presId,
+      requestBody: {
+        requests: [
+          {
+            createSheetsChart: {
+              objectId: chartElemId,
+              spreadsheetId: SPREADSHEET_ID,
+              chartId: chartId,
+              linkingMode: 'LINKED',
+              elementProperties: {
+                pageObjectId: slideId,
+                size: {
+                  height: { magnitude: pgH, unit: 'PT' },
+                  width:  { magnitude: pgW, unit: 'PT' }
+                },
+                transform: {
+                  scaleX: 1, scaleY: 1, shearX: 0, shearY: 0,
+                  translateX: 0, translateY: 0, unit: 'PT'
+                }
+              }
+            }
+          }
+        ]
+      }
+    })
+  );
+
+  return chartElemId;
+}
+
+async function exportPresentationPDF(presId) {
+  const res = await withRetry('drive.export(pdf)', () =>
     driveApi.files.export(
-      { fileId: `${spreadsheetId}/charts/${chartId}`, mimeType: 'application/pdf' },
+      { fileId: presId, mimeType: 'application/pdf' },
       { responseType: 'stream' }
     )
   );
@@ -117,20 +179,11 @@ async function exportChartPDF(spreadsheetId, chartId) {
   });
 }
 
-function bufferToStream(buffer) {
-  return new Readable({
-    read() {
-      this.push(buffer);
-      this.push(null);
-    }
-  });
-}
-
 async function uploadPDF({ parentId, name, pdfBuffer }) {
   await withRetry(`drive.upload ${name}`, () =>
     driveApi.files.create({
       requestBody: { name, parents: [parentId], mimeType: 'application/pdf' },
-      media: { mimeType: 'application/pdf', body: bufferToStream(pdfBuffer) },
+      media: { mimeType: 'application/pdf', body: pdfBuffer },
       fields: 'id',
       supportsAllDrives: true,
     })
@@ -163,12 +216,19 @@ async function main() {
       const fileName = `${tienda}__${title}__${DATE_STR}.pdf`;
 
       try {
-        const pdf = await exportChartPDF(SPREADSHEET_ID, c.chartId);
+        // 👉 flujo nuevo: presentación por gráfico
+        const { presId, slideId, pgW, pgH } = await createTempPresentation(`TMP_${tienda}_${idx}__${DATE_STR}`);
+        await insertChartAndFit({ presId, slideId, chartId: c.chartId, pgW, pgH });
+        const pdf = await exportPresentationPDF(presId);
         await uploadPDF({ parentId: dateFolderId, name: fileName, pdfBuffer: pdf });
+
+        // borrar presentación entera
+        await withRetry('drive.delete pres', () =>
+          driveApi.files.delete({ fileId: presId, supportsAllDrives: true })
+        );
 
         console.log(`📄 OK ${tienda} → ${fileName}`);
         total++;
-        await sleep(200);
       } catch (e) {
         console.log(`❌ Falló ${tienda} chart#${idx} (${title}): ${e.message || e}`);
       }
