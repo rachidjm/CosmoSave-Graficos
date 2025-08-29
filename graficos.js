@@ -2,7 +2,6 @@
 import 'dotenv/config';
 import { google } from 'googleapis';
 import pLimit from 'p-limit';
-import { Readable } from 'stream';
 
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
 if (!SPREADSHEET_ID) { console.error('❌ Falta SPREADSHEET_ID'); process.exit(1); }
@@ -41,7 +40,7 @@ const TIENDAS = {
 // 📂 Carpeta PTC en TU Drive personal (presentaciones temporales)
 const TEMP_FOLDER_ID = '18vTs2um4CCqnI1OKWfBdM5_bnqLSeSJO';
 
-// 🧩 ID de la plantilla en PTC
+// 🧩 ID de la plantilla en PTC (tu enlace)
 const TEMPLATE_PRESENTATION_ID = '1YrKAl9DlHncNcP-ZxQMvuH8RO4Sbwx-jL0zfeUd9pHM';
 
 const FILE_PREFIX  = 'Grafico';
@@ -74,15 +73,17 @@ async function getSheetsAndCharts() {
   (res.data.sheets || []).forEach(sh => {
     const title = sh.properties?.title;
     if (!title) return;
+
     if (!title.startsWith('Dashboard') && title !== 'GRAFICOS PERSONALES') return;
 
+    const sheetId = sh.properties?.sheetId;
     const charts = (sh.charts || []).map(c => ({
       chartId: c.chartId,
       title: c.spec?.title || ''
     }));
 
     if (charts.length) {
-      byTitle.set(title, { title, charts });
+      byTitle.set(title, { sheetId, title, charts });
     }
   });
 
@@ -160,6 +161,29 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
     })
   );
 
+  const margin = 10;
+  await withRetry('slides.batchUpdate:fit', () =>
+    slidesApi.presentations.batchUpdate({
+      presentationId: presId,
+      requestBody: {
+        requests: [
+          {
+            updatePageElementTransform: {
+              objectId: chartElemId,
+              applyMode: 'ABSOLUTE',
+              transform: {
+                scaleX: (pgW - 2 * margin) / pgW,
+                scaleY: (pgH - 2 * margin) / pgH,
+                shearX: 0, shearY: 0,
+                translateX: margin, translateY: margin, unit: 'PT'
+              }
+            }
+          }
+        ]
+      }
+    })
+  );
+
   return chartElemId;
 }
 
@@ -179,11 +203,20 @@ async function exportPresentationPDF(presId) {
   });
 }
 
+async function deletePageElement(presId, objectId) {
+  await withRetry('slides.batchUpdate:deleteElement', () =>
+    slidesApi.presentations.batchUpdate({
+      presentationId: presId,
+      requestBody: { requests: [{ deleteObject: { objectId } }] }
+    })
+  );
+}
+
 async function uploadPDF({ parentId, name, pdfBuffer }) {
   await withRetry(`drive.upload ${name}`, () =>
     driveApi.files.create({
       requestBody: { name, parents: [parentId], mimeType: 'application/pdf' },
-      media: { mimeType: 'application/pdf', body: pdfBuffer },
+      media: { mimeType: 'application/pdf', body: pdfBuffer }, // ✅ Buffer directo
       fields: 'id',
       supportsAllDrives: true,
     })
@@ -210,29 +243,34 @@ async function main() {
 
     console.log(`🗂️ ${tienda} / ${sheetName}: ${charts.length} gráficos → ${DATE_STR}`);
 
+    const { presId, slideId, pgW, pgH } = await createTempPresentation(`TMP_${tienda}__${DATE_STR}`);
+
     await Promise.all(charts.map((c, i) => limit(async () => {
       const idx = i + 1;
       const title = (c.title || `${FILE_PREFIX}_${idx}`).replace(/[\\/:*?"<>|]/g, '_').slice(0, 80);
       const fileName = `${tienda}__${title}__${DATE_STR}.pdf`;
 
       try {
-        // 👉 flujo nuevo: presentación por gráfico
-        const { presId, slideId, pgW, pgH } = await createTempPresentation(`TMP_${tienda}_${idx}__${DATE_STR}`);
-        await insertChartAndFit({ presId, slideId, chartId: c.chartId, pgW, pgH });
+        const objId = await insertChartAndFit({ presId, slideId, chartId: c.chartId, pgW, pgH });
         const pdf = await exportPresentationPDF(presId);
         await uploadPDF({ parentId: dateFolderId, name: fileName, pdfBuffer: pdf });
-
-        // borrar presentación entera
-        await withRetry('drive.delete pres', () =>
-          driveApi.files.delete({ fileId: presId, supportsAllDrives: true })
-        );
+        await deletePageElement(presId, objId);
 
         console.log(`📄 OK ${tienda} → ${fileName}`);
         total++;
+        await sleep(200);
       } catch (e) {
         console.log(`❌ Falló ${tienda} chart#${idx} (${title}): ${e.message || e}`);
       }
     })));
+
+    try {
+      await withRetry('drive.delete pres', () =>
+        driveApi.files.delete({ fileId: presId, supportsAllDrives: true })
+      );
+    } catch (e) {
+      console.log(`⚠️ No se pudo borrar presentación temporal de ${tienda}: ${e.message || e}`);
+    }
   }
 
   console.log(`✅ Export completado. PDFs subidos: ${total}`);
