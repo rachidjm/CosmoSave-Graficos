@@ -119,23 +119,30 @@ async function createTempPresentation(name) {
   return { presId, slideId, pgW, pgH };
 }
 
+/** Inserta un gráfico desde Sheets y lo ajusta al tamaño de la página */
 async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
   const chartElemId = `chart_${chartId}_${Date.now()}`;
-  const requests = [
-    {
-      createSheetsChart: {
-        objectId: chartElemId,
-        spreadsheetId: SPREADSHEET_ID,
-        chartId,
-        linkingMode: 'LINKED'
-      }
-    }
-  ];
 
+  // 1. Crear el chart enlazado
   await withRetry('slides.batchUpdate:createChart', () =>
-    slidesApi.presentations.batchUpdate({ presentationId: presId, requestBody: { requests } })
+    slidesApi.presentations.batchUpdate({
+      presentationId: presId,
+      requestBody: {
+        requests: [
+          {
+            createSheetsChart: {
+              objectId: chartElemId,
+              spreadsheetId: SPREADSHEET_ID,
+              chartId: chartId,
+              linkingMode: 'LINKED'
+            }
+          }
+        ]
+      }
+    })
   );
 
+  // 2. Ajustar tamaño y posición
   const margin = 10;
   await withRetry('slides.batchUpdate:fit', () =>
     slidesApi.presentations.batchUpdate({
@@ -156,7 +163,10 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
             updatePageElementTransform: {
               objectId: chartElemId,
               applyMode: 'ABSOLUTE',
-              transform: { scaleX: 1, scaleY: 1, shearX: 0, shearY: 0, translateX: margin, translateY: margin, unit: 'PT' }
+              transform: {
+                scaleX: 1, scaleY: 1, shearX: 0, shearY: 0,
+                translateX: margin, translateY: margin, unit: 'PT'
+              }
             }
           }
         ]
