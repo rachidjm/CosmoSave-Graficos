@@ -121,7 +121,6 @@ async function createTempPresentation(name) {
 async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
   const chartElemId = `chart_${chartId}_${Date.now()}`;
 
-  // 1. Crear el chart enlazado con elementProperties
   await withRetry('slides.batchUpdate:createChart', () =>
     slidesApi.presentations.batchUpdate({
       presentationId: presId,
@@ -151,7 +150,6 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
     })
   );
 
-  // 2. Ajustar posición y escala con márgenes
   const margin = 10;
   await withRetry('slides.batchUpdate:fit', () =>
     slidesApi.presentations.batchUpdate({
@@ -194,11 +192,12 @@ async function deletePageElement(presId, objectId) {
   );
 }
 
+// 🔧 FIX: usar directamente pdfBuffer
 async function uploadPDF({ parentId, name, pdfBuffer }) {
   await withRetry(`drive.upload ${name}`, () =>
     driveApi.files.create({
       requestBody: { name, parents: [parentId], mimeType: 'application/pdf' },
-      media: { mimeType: 'application/pdf', body: Buffer.from(pdfBuffer) },
+      media: { mimeType: 'application/pdf', body: pdfBuffer }, // ✅ CORREGIDO
       fields: 'id',
       supportsAllDrives: true,
     })
@@ -210,7 +209,6 @@ async function main() {
   if (!token) { console.error('❌ No se pudo obtener access token OAuth'); process.exit(1); }
 
   const byTitle = await getSheetsAndCharts();
-
   const limit = pLimit(CONCURRENCY);
   let total = 0;
 
