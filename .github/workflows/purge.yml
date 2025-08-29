@@ -1,7 +1,7 @@
 name: Purge Drive Trash
 
 on:
-  workflow_dispatch:   # 👈 así lo puedes lanzar manualmente
+  workflow_dispatch:
 
 jobs:
   purge:
@@ -20,7 +20,7 @@ jobs:
         run: npm install googleapis dotenv
 
       - name: Write SA credentials
-        run: echo "${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}" > sa.json
+        run: echo '${{ secrets.SA_JSON }}' > sa.json
 
       - name: Run purge
         run: node purge.js
