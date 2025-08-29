@@ -25,7 +25,6 @@ oAuth2Client.setCredentials({ refresh_token: OAUTH_REFRESH_TOKEN });
 const auth = oAuth2Client;
 const sheetsApi = google.sheets({ version: 'v4', auth });
 const driveApi  = google.drive({ version: 'v3', auth });
-const slidesApi = google.slides({ version: 'v1', auth });
 
 const TIENDAS = {
   ARENAL:          { sheetName: 'Dashboard',           folderId: '16PALsypZSdXiiXIgA_xMex710usAZAAZ' },
@@ -37,12 +36,6 @@ const TIENDAS = {
   PACOPERFUMERIAS: { sheetName: 'Dashboard PF',        folderId: '1AtdZilQVDTJvFe1T09z102XQNZK8O49J' },
   PERSONALES:      { sheetName: 'GRAFICOS PERSONALES', folderId: '1cwLOPdclOxy47Bkp7dwvhzHLIIjB4svO' },
 };
-
-// 📂 Carpeta PTC en TU Drive personal (presentaciones temporales)
-const TEMP_FOLDER_ID = '18vTs2um4CCqnI1OKWfBdM5_bnqLSeSJO';
-
-// 🧩 ID de la plantilla en PTC (tu enlace)
-const TEMPLATE_PRESENTATION_ID = '1YrKAl9DlHncNcP-ZxQMvuH8RO4Sbwx-jL0zfeUd9pHM';
 
 const FILE_PREFIX  = 'Grafico';
 const DATE_STR     = new Date().toISOString().slice(0, 10);
@@ -74,7 +67,6 @@ async function getSheetsAndCharts() {
   (res.data.sheets || []).forEach(sh => {
     const title = sh.properties?.title;
     if (!title) return;
-
     if (!title.startsWith('Dashboard') && title !== 'GRAFICOS PERSONALES') return;
 
     const sheetId = sh.properties?.sheetId;
@@ -108,90 +100,11 @@ async function ensureDatedSubfolder(parentId, dateStr) {
   return folder.data.id;
 }
 
-async function createTempPresentation(name) {
-  const file = await withRetry('drive.copy presentation', () =>
-    driveApi.files.copy({
-      fileId: TEMPLATE_PRESENTATION_ID,
-      requestBody: { name, parents: [TEMP_FOLDER_ID] },
-      fields: 'id',
-      supportsAllDrives: true,
-    })
-  );
-  const presId = file.data.id;
-
-  const pres = await withRetry('slides.get', () =>
-    slidesApi.presentations.get({ presentationId: presId })
-  );
-
-  const slideId = pres.data.slides?.[0]?.objectId;
-  const pgW = pres.data.pageSize?.width?.magnitude || 960;
-  const pgH = pres.data.pageSize?.height?.magnitude || 540;
-  if (!slideId) throw new Error('No se pudo obtener slideId inicial');
-  return { presId, slideId, pgW, pgH };
-}
-
-async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
-  const chartElemId = `chart_${chartId}_${Date.now()}`;
-
-  await withRetry('slides.batchUpdate:createChart', () =>
-    slidesApi.presentations.batchUpdate({
-      presentationId: presId,
-      requestBody: {
-        requests: [
-          {
-            createSheetsChart: {
-              objectId: chartElemId,
-              spreadsheetId: SPREADSHEET_ID,
-              chartId: chartId,
-              linkingMode: 'LINKED',
-              elementProperties: {
-                pageObjectId: slideId,
-                size: {
-                  height: { magnitude: pgH, unit: 'PT' },
-                  width:  { magnitude: pgW, unit: 'PT' }
-                },
-                transform: {
-                  scaleX: 1, scaleY: 1, shearX: 0, shearY: 0,
-                  translateX: 0, translateY: 0, unit: 'PT'
-                }
-              }
-            }
-          }
-        ]
-      }
-    })
-  );
-
-  const margin = 10;
-  await withRetry('slides.batchUpdate:fit', () =>
-    slidesApi.presentations.batchUpdate({
-      presentationId: presId,
-      requestBody: {
-        requests: [
-          {
-            updatePageElementTransform: {
-              objectId: chartElemId,
-              applyMode: 'ABSOLUTE',
-              transform: {
-                scaleX: (pgW - 2 * margin) / pgW,
-                scaleY: (pgH - 2 * margin) / pgH,
-                shearX: 0, shearY: 0,
-                translateX: margin, translateY: margin, unit: 'PT'
-              }
-            }
-          }
-        ]
-      }
-    })
-  );
-
-  return chartElemId;
-}
-
-async function exportPresentationPDF(presId) {
-  const res = await withRetry('drive.export(pdf)', () =>
+// 📤 Exportar un gráfico directo de Sheets como PDF
+async function exportChartPDF(spreadsheetId, chartId) {
+  const res = await withRetry(`drive.export chart#${chartId}`, () =>
     driveApi.files.export(
-      { fileId: presId, mimeType: 'application/pdf' },
+      { fileId: `${spreadsheetId}/charts/${chartId}`, mimeType: 'application/pdf' },
       { responseType: 'stream' }
     )
   );
@@ -202,15 +115,6 @@ async function exportPresentationPDF(presId) {
     res.data.on('end', () => resolve(Buffer.concat(chunks)));
     res.data.on('error', reject);
   });
-}
-
-async function deletePageElement(presId, objectId) {
-  await withRetry('slides.batchUpdate:deleteElement', () =>
-    slidesApi.presentations.batchUpdate({
-      presentationId: presId,
-      requestBody: { requests: [{ deleteObject: { objectId } }] }
-    })
-  );
 }
 
 function bufferToStream(buffer) {
@@ -253,18 +157,14 @@ async function main() {
 
     console.log(`🗂️ ${tienda} / ${sheetName}: ${charts.length} gráficos → ${DATE_STR}`);
 
-    const { presId, slideId, pgW, pgH } = await createTempPresentation(`TMP_${tienda}__${DATE_STR}`);
-
     await Promise.all(charts.map((c, i) => limit(async () => {
       const idx = i + 1;
       const title = (c.title || `${FILE_PREFIX}_${idx}`).replace(/[\\/:*?"<>|]/g, '_').slice(0, 80);
       const fileName = `${tienda}__${title}__${DATE_STR}.pdf`;
 
       try {
-        const objId = await insertChartAndFit({ presId, slideId, chartId: c.chartId, pgW, pgH });
-        const pdf = await exportPresentationPDF(presId);
+        const pdf = await exportChartPDF(SPREADSHEET_ID, c.chartId);
         await uploadPDF({ parentId: dateFolderId, name: fileName, pdfBuffer: pdf });
-        await deletePageElement(presId, objId);
 
         console.log(`📄 OK ${tienda} → ${fileName}`);
         total++;
@@ -273,14 +173,6 @@ async function main() {
         console.log(`❌ Falló ${tienda} chart#${idx} (${title}): ${e.message || e}`);
       }
     })));
-
-    try {
-      await withRetry('drive.delete pres', () =>
-        driveApi.files.delete({ fileId: presId, supportsAllDrives: true })
-      );
-    } catch (e) {
-      console.log(`⚠️ No se pudo borrar presentación temporal de ${tienda}: ${e.message || e}`);
-    }
   }
 
   console.log(`✅ Export completado. PDFs subidos: ${total}`);
