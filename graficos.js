@@ -3,25 +3,9 @@ import 'dotenv/config';
 import { google } from 'googleapis';
 import pLimit from 'p-limit';
 
-/**
- * Exporta TODOS los gráficos incrustados de las pestañas indicadas:
- * 1) Crea UNA presentación temporal en Slides (dentro de PTC)
- * 2) Inserta el gráfico desde Sheets (createSheetsChart)
- * 3) Ajusta a toda la página
- * 4) Exporta a PDF con Drive.files.export
- * 5) Sube el PDF a la carpeta destino/YYYY-MM-DD en Drive
- * 6) Reutiliza la MISMA slide borrando el elemento anterior (rápido y sin cuotas tontas)
- *
- * Requiere en el workflow:
- *  - GOOGLE_APPLICATION_CREDENTIALS → sa.json (ya lo tienes)
- *  - secret SPREADSHEET_ID
- * Imprescindible: habilitar **Slides API** en el proyecto del Service Account.
- */
-
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
 if (!SPREADSHEET_ID) { console.error('❌ Falta SPREADSHEET_ID'); process.exit(1); }
 
-// Mapa tienda -> { sheetName, folderId }  (tus IDs reales)
 const TIENDAS = {
   ARENAL:          { sheetName: 'Dashboard',           folderId: '16PALsypZSdXiiXIgA_xMex710usAZAAZ' },
   DRUNI:           { sheetName: 'Dashboard D',         folderId: '1GrDRvmo9lR0RaBIw6y69OdFGV4Ao3KGi' },
@@ -33,7 +17,6 @@ const TIENDAS = {
   PERSONALES:      { sheetName: 'GRAFICOS PERSONALES', folderId: '1cwLOPdclOxy47Bkp7dwvhzHLIIjB4svO' },
 };
 
-// 📂 Carpeta PTC para presentaciones temporales
 const TEMP_FOLDER_ID = '18vTs2um4CCqnI1OKWfBdM5_bnqLSeSJO';
 
 const FILE_PREFIX  = 'Grafico';
@@ -53,7 +36,6 @@ const sheetsApi = google.sheets({ version: 'v4', auth });
 const driveApi  = google.drive({ version: 'v3', auth });
 const slidesApi = google.slides({ version: 'v1', auth });
 
-// 🔎 Debug: mostrar projectId de las credenciales
 (async () => {
   try {
     const pid = await auth.getProjectId();
@@ -108,9 +90,7 @@ async function ensureDatedSubfolder(parentId, dateStr) {
   return folder.data.id;
 }
 
-/** Crear presentación temporal en carpeta PTC */
 async function createTempPresentation(name) {
-  // 1. Crear presentación vacía en PTC vía Drive API
   const file = await withRetry('drive.create presentation', () =>
     driveApi.files.create({
       requestBody: {
@@ -123,7 +103,6 @@ async function createTempPresentation(name) {
   );
   const presId = file.data.id;
 
-  // 2. Leer presentación con Slides API
   const pres = await withRetry('slides.get', () =>
     slidesApi.presentations.get({ presentationId: presId })
   );
@@ -260,12 +239,13 @@ async function main() {
       }
     })));
 
+    // ⚠️ Cambiado: borrar permanentemente la presentación temporal
     try {
-      await withRetry('drive.trash pres', () =>
-        driveApi.files.update({ fileId: presId, requestBody: { trashed: true } })
+      await withRetry('drive.delete pres', () =>
+        driveApi.files.delete({ fileId: presId })
       );
     } catch (e) {
-      console.log(`⚠️ No se pudo eliminar presentación temporal de ${tienda}: ${e.message || e}`);
+      console.log(`⚠️ No se pudo borrar presentación temporal de ${tienda}: ${e.message || e}`);
     }
   }
 
