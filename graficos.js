@@ -126,11 +126,11 @@ async function createTempPresentation(name) {
   return { presId, slideId, pgW, pgH };
 }
 
-// ✅ FIX FINAL: gráficos a página completa sin errores
+// ✅ FIX: gráficos a página completa, sin UNIT_UNSPECIFIED
 async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
   const chartElemId = `chart_${chartId}_${Date.now()}`;
 
-  // 1. Crear gráfico (solo pageObjectId)
+  // 1. Crear gráfico con transform válido (unit: 'PT')
   await withRetry('slides.batchUpdate:createChart', () =>
     slidesApi.presentations.batchUpdate({
       presentationId: presId,
@@ -142,7 +142,18 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
               spreadsheetId: SPREADSHEET_ID,
               chartId: chartId,
               linkingMode: 'LINKED',
-              elementProperties: { pageObjectId: slideId }
+              elementProperties: {
+                pageObjectId: slideId,
+                transform: {
+                  scaleX: 1,
+                  scaleY: 1,
+                  shearX: 0,
+                  shearY: 0,
+                  translateX: 0,
+                  translateY: 0,
+                  unit: 'PT'
+                }
+              }
             }
           }
         ]
@@ -150,7 +161,7 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
     })
   );
 
-  // 2. Redimensionar + escalar para ocupar toda la slide
+  // 2. Redimensionar al tamaño de la slide
   await withRetry('slides.batchUpdate:resize', () =>
     slidesApi.presentations.batchUpdate({
       presentationId: presId,
@@ -162,21 +173,6 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
               size: {
                 height: { magnitude: pgH, unit: 'PT' },
                 width:  { magnitude: pgW, unit: 'PT' }
-              }
-            }
-          },
-          {
-            updatePageElementTransform: {
-              objectId: chartElemId,
-              applyMode: 'ABSOLUTE',
-              transform: {
-                scaleX: 1,
-                scaleY: 1,
-                shearX: 0,
-                shearY: 0,
-                translateX: 0,
-                translateY: 0,
-                unit: 'PT'
               }
             }
           }
