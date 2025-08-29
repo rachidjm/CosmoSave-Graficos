@@ -121,7 +121,7 @@ async function createTempPresentation(name) {
 async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
   const chartElemId = `chart_${chartId}_${Date.now()}`;
 
-  // 1. Crear el chart enlazado con elementProperties (para evitar UNIT_UNSPECIFIED)
+  // 1. Crear el chart enlazado con elementProperties
   await withRetry('slides.batchUpdate:createChart', () =>
     slidesApi.presentations.batchUpdate({
       presentationId: presId,
@@ -159,13 +159,13 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
       requestBody: {
         requests: [
           {
-            updateSize: {
+            updatePageElementProperties: {
               objectId: chartElemId,
+              fields: 'size',
               size: {
                 height: { magnitude: pgH - 2 * margin, unit: 'PT' },
                 width:  { magnitude: pgW - 2 * margin, unit: 'PT' }
-              },
-              fields: 'height,width'
+              }
             }
           },
           {
