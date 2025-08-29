@@ -1,9 +1,9 @@
 name: Exportar gráficos Sheets a Drive
 
 on:
-  workflow_dispatch: {}         # lo lanzas a mano desde "Actions"
-  # schedule:                   # (opcional) ejecutarlo cada día a las 07:00 UTC
-  #   - cron: "0 7 * * *"
+  workflow_dispatch: {}
+  # schedule:
+  #   - cron: "0 7 15,30 * *"
 
 jobs:
   export:
@@ -24,8 +24,14 @@ jobs:
         run: |
           npm i googleapis pdfkit node-fetch@3 p-limit image-size dotenv
 
+      - name: Escribir credenciales del SA a archivo
+        run: |
+          echo "${{ secrets.SA_JSON }}" > sa.json
+          # Validación mínima
+          node -e "const f=require('fs');const j=JSON.parse(f.readFileSync('sa.json','utf8')); if(!j.client_email||!j.private_key) { throw new Error('SA_JSON incompleto'); }"
+
       - name: Ejecutar exportador
         env:
           SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
-          SA_JSON:        ${{ secrets.SA_JSON }}
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/sa.json
         run: node graficos.js
