@@ -1,0 +1,31 @@
+name: Exportar gráficos Sheets a Drive
+
+on:
+  workflow_dispatch: {}         # lo lanzas a mano desde "Actions"
+  # schedule:                   # (opcional) ejecutarlo cada día a las 07:00 UTC
+  #   - cron: "0 7 * * *"
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Instalar dependencias
+        run: |
+          npm i googleapis pdfkit node-fetch@3 p-limit image-size dotenv
+
+      - name: Ejecutar exportador
+        env:
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+          SA_JSON:        ${{ secrets.SA_JSON }}
+        run: node graficos.js
