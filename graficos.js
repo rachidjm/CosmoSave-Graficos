@@ -63,18 +63,31 @@ async function withRetry(tag, fn) {
   }
 }
 
+// 🔥 Solo recoger gráficos de Dashboard en adelante
 async function getSheetsAndCharts() {
   const fields = 'sheets(properties(sheetId,title),charts(chartId,spec(title)))';
   const res = await withRetry('sheets.get', () =>
     sheetsApi.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID, fields })
   );
+
   const byTitle = new Map();
   (res.data.sheets || []).forEach(sh => {
     const title = sh.properties?.title;
+    if (!title) return;
+
+    if (!title.startsWith('Dashboard') && title !== 'GRAFICOS PERSONALES') return;
+
     const sheetId = sh.properties?.sheetId;
-    const charts = (sh.charts || []).map(c => ({ chartId: c.chartId, title: c.spec?.title || '' }));
-    if (title) byTitle.set(title, { sheetId, title, charts });
+    const charts = (sh.charts || []).map(c => ({
+      chartId: c.chartId,
+      title: c.spec?.title || ''
+    }));
+
+    if (charts.length) {
+      byTitle.set(title, { sheetId, title, charts });
+    }
   });
+
   return byTitle;
 }
 
@@ -175,7 +188,6 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
   return chartElemId;
 }
 
-// exporta el PDF como stream y lo convierte a Buffer
 async function exportPresentationPDF(presId) {
   const res = await withRetry('drive.export(pdf)', () =>
     driveApi.files.export(
@@ -201,7 +213,6 @@ async function deletePageElement(presId, objectId) {
   );
 }
 
-// convierte Buffer en stream para la subida
 function bufferToStream(buffer) {
   return new Readable({
     read() {
@@ -215,7 +226,7 @@ async function uploadPDF({ parentId, name, pdfBuffer }) {
   await withRetry(`drive.upload ${name}`, () =>
     driveApi.files.create({
       requestBody: { name, parents: [parentId], mimeType: 'application/pdf' },
-      media: { mimeType: 'application/pdf', body: bufferToStream(pdfBuffer) }, // ✅ stream en vez de Buffer
+      media: { mimeType: 'application/pdf', body: bufferToStream(pdfBuffer) },
       fields: 'id',
       supportsAllDrives: true,
     })
