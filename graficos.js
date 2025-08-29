@@ -38,9 +38,8 @@ const TIENDAS = {
   PERSONALES:      { sheetName: 'GRAFICOS PERSONALES', folderId: '1cwLOPdclOxy47Bkp7dwvhzHLIIjB4svO' },
 };
 
-// 📂 Carpeta PTC en TU Drive personal (presentaciones temporales)
+// 📂 Carpeta PTC en tu Drive personal
 const TEMP_FOLDER_ID = '18vTs2um4CCqnI1OKWfBdM5_bnqLSeSJO';
-
 // 🧩 ID de la plantilla en PTC
 const TEMPLATE_PRESENTATION_ID = '1YrKAl9DlHncNcP-ZxQMvuH8RO4Sbwx-jL0zfeUd9pHM';
 
@@ -74,7 +73,6 @@ async function getSheetsAndCharts() {
   (res.data.sheets || []).forEach(sh => {
     const title = sh.properties?.title;
     if (!title) return;
-
     if (!title.startsWith('Dashboard') && title !== 'GRAFICOS PERSONALES') return;
 
     const sheetId = sh.properties?.sheetId;
@@ -83,9 +81,7 @@ async function getSheetsAndCharts() {
       title: c.spec?.title || ''
     }));
 
-    if (charts.length) {
-      byTitle.set(title, { sheetId, title, charts });
-    }
+    if (charts.length) byTitle.set(title, { sheetId, title, charts });
   });
 
   return byTitle;
@@ -130,11 +126,11 @@ async function createTempPresentation(name) {
   return { presId, slideId, pgW, pgH };
 }
 
-// ✅ FIX: gráficos a página completa
+// ✅ FIX FINAL: gráficos a página completa sin errores
 async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
   const chartElemId = `chart_${chartId}_${Date.now()}`;
 
-  // 1. Crear el gráfico (Google ignora size/transform aquí)
+  // 1. Crear gráfico (solo pageObjectId)
   await withRetry('slides.batchUpdate:createChart', () =>
     slidesApi.presentations.batchUpdate({
       presentationId: presId,
@@ -154,12 +150,21 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
     })
   );
 
-  // 2. Escalarlo manualmente para ocupar toda la slide
-  await withRetry('slides.batchUpdate:fit', () =>
+  // 2. Redimensionar + escalar para ocupar toda la slide
+  await withRetry('slides.batchUpdate:resize', () =>
     slidesApi.presentations.batchUpdate({
       presentationId: presId,
       requestBody: {
         requests: [
+          {
+            updateSize: {
+              objectId: chartElemId,
+              size: {
+                height: { magnitude: pgH, unit: 'PT' },
+                width:  { magnitude: pgW, unit: 'PT' }
+              }
+            }
+          },
           {
             updatePageElementTransform: {
               objectId: chartElemId,
@@ -172,15 +177,6 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
                 translateX: 0,
                 translateY: 0,
                 unit: 'PT'
-              }
-            }
-          },
-          {
-            updateSize: {
-              objectId: chartElemId,
-              size: {
-                height: { magnitude: pgH, unit: 'PT' },
-                width:  { magnitude: pgW, unit: 'PT' }
               }
             }
           }
@@ -217,7 +213,7 @@ async function deletePageElement(presId, objectId) {
   );
 }
 
-// convertir Buffer en ReadableStream
+// Buffer → Stream
 function bufferToStream(buffer) {
   return new Readable({
     read() {
