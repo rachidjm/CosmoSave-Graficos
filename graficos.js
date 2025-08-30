@@ -126,11 +126,11 @@ async function createTempPresentation(name) {
   return { presId, slideId, pgW, pgH };
 }
 
-// ✅ Insertar, leer tamaño real y escalar
+// ✅ Versión estable: crear como antes (funcional), luego escalar
 async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
   const chartElemId = `chart_${chartId}_${Date.now()}`;
 
-  // 1. Insertar gráfico sin size/transform
+  // 1. Insertar gráfico con size+transform (igual que en tu versión estable)
   await withRetry('slides.batchUpdate:createChart', () =>
     slidesApi.presentations.batchUpdate({
       presentationId: presId,
@@ -142,7 +142,22 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
               spreadsheetId: SPREADSHEET_ID,
               chartId: chartId,
               linkingMode: 'LINKED',
-              elementProperties: { pageObjectId: slideId }
+              elementProperties: {
+                pageObjectId: slideId,
+                size: {
+                  height: { magnitude: pgH, unit: 'PT' },
+                  width:  { magnitude: pgW, unit: 'PT' }
+                },
+                transform: {
+                  scaleX: 1,
+                  scaleY: 1,
+                  shearX: 0,
+                  shearY: 0,
+                  translateX: 0,
+                  translateY: 0,
+                  unit: 'PT'
+                }
+              }
             }
           }
         ]
@@ -150,32 +165,9 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
     })
   );
 
-  // 2. Leer el gráfico para saber su tamaño real
-  const pres = await withRetry('slides.get after insert', () =>
-    slidesApi.presentations.get({
-      presentationId: presId,
-      fields: 'slides(pageElements(objectId,size,transform))'
-    })
-  );
-  const elem = pres.data.slides
-    .flatMap(s => s.pageElements || [])
-    .find(e => e.objectId === chartElemId);
-
-  if (!elem) throw new Error('No se pudo obtener el gráfico insertado');
-
-  const elemW = elem.size?.width?.magnitude || 100;
-  const elemH = elem.size?.height?.magnitude || 100;
-
-  // 3. Calcular escalado para llenar la slide con margen
+  // 2. Escalar a casi toda la slide
   const margin = 20;
-  const targetW = pgW - 2 * margin;
-  const targetH = pgH - 2 * margin;
-
-  const scaleX = targetW / elemW;
-  const scaleY = targetH / elemH;
-
-  // 4. Aplicar transform
-  await withRetry('slides.batchUpdate:fit', () =>
+  await withRetry('slides.batchUpdate:resize', () =>
     slidesApi.presentations.batchUpdate({
       presentationId: presId,
       requestBody: {
@@ -185,8 +177,8 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
               objectId: chartElemId,
               applyMode: 'ABSOLUTE',
               transform: {
-                scaleX,
-                scaleY,
+                scaleX: (pgW - 2 * margin) / pgW,
+                scaleY: (pgH - 2 * margin) / pgH,
                 shearX: 0,
                 shearY: 0,
                 translateX: margin,
