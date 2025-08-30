@@ -126,11 +126,11 @@ async function createTempPresentation(name) {
   return { presId, slideId, pgW, pgH };
 }
 
-// ✅ Versión estable: crear como antes (funcional), luego escalar
+// ✅ Insertar (con size/transform válidos), luego leer tamaño real y escalar
 async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
   const chartElemId = `chart_${chartId}_${Date.now()}`;
 
-  // 1. Insertar gráfico con size+transform (igual que en tu versión estable)
+  // 1. Insertar gráfico (bloque que sabemos que funciona)
   await withRetry('slides.batchUpdate:createChart', () =>
     slidesApi.presentations.batchUpdate({
       presentationId: presId,
@@ -165,9 +165,29 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
     })
   );
 
-  // 2. Escalar a casi toda la slide
+  // 2. Consultar el tamaño real del gráfico
+  const pres = await withRetry('slides.get after insert', () =>
+    slidesApi.presentations.get({
+      presentationId: presId,
+      fields: 'slides(pageElements(objectId,size))'
+    })
+  );
+  const elem = pres.data.slides
+    .flatMap(s => s.pageElements || [])
+    .find(e => e.objectId === chartElemId);
+
+  const elemW = elem?.size?.width?.magnitude || 100;
+  const elemH = elem?.size?.height?.magnitude || 100;
+
+  // 3. Calcular escalado
   const margin = 20;
-  await withRetry('slides.batchUpdate:resize', () =>
+  const targetW = pgW - 2 * margin;
+  const targetH = pgH - 2 * margin;
+  const scaleX = targetW / elemW;
+  const scaleY = targetH / elemH;
+
+  // 4. Aplicar transform escalado
+  await withRetry('slides.batchUpdate:fit', () =>
     slidesApi.presentations.batchUpdate({
       presentationId: presId,
       requestBody: {
@@ -177,8 +197,8 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
               objectId: chartElemId,
               applyMode: 'ABSOLUTE',
               transform: {
-                scaleX: (pgW - 2 * margin) / pgW,
-                scaleY: (pgH - 2 * margin) / pgH,
+                scaleX,
+                scaleY,
                 shearX: 0,
                 shearY: 0,
                 translateX: margin,
