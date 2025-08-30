@@ -117,18 +117,36 @@ async function createTempPresentation(name, parentId) {
     slidesApi.presentations.get({ presentationId: presId })
   );
 
-  const slideId = pres.data.slides?.[0]?.objectId;
   const pgW = pres.data.pageSize?.width?.magnitude || 960;
   const pgH = pres.data.pageSize?.height?.magnitude || 540;
-  if (!slideId) throw new Error('No se pudo obtener slideId inicial');
-  return { presId, slideId, pgW, pgH };
+  return { presId, pgW, pgH };
 }
 
-// Insertar gráficos y escalar
+// Crear nueva slide en blanco
+async function createNewSlide(presId) {
+  const slideId = `slide_${Date.now()}_${Math.random().toString(36).substr(2,5)}`;
+  await withRetry('slides.batchUpdate:createSlide', () =>
+    slidesApi.presentations.batchUpdate({
+      presentationId: presId,
+      requestBody: {
+        requests: [
+          {
+            createSlide: {
+              objectId: slideId,
+              slideLayoutReference: { predefinedLayout: 'BLANK' }
+            }
+          }
+        ]
+      }
+    })
+  );
+  return slideId;
+}
+
+// Insertar gráfico y escalar
 async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
   const chartElemId = `chart_${chartId}_${Date.now()}`;
 
-  // 1. Crear gráfico
   await withRetry('slides.batchUpdate:createChart', () =>
     slidesApi.presentations.batchUpdate({
       presentationId: presId,
@@ -163,7 +181,6 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
     })
   );
 
-  // 2. Escalar para que ocupe casi toda la slide
   const margin = 20;
   await withRetry('slides.batchUpdate:fit', () =>
     slidesApi.presentations.batchUpdate({
@@ -213,13 +230,14 @@ async function main() {
 
     console.log(`🗂️ ${tienda} / ${sheetName}: ${charts.length} gráficos → ${DATE_STR}`);
 
-    const { presId, slideId, pgW, pgH } = await createTempPresentation(`${tienda}__${DATE_STR}`, dateFolderId);
+    const { presId, pgW, pgH } = await createTempPresentation(`${tienda}__${DATE_STR}`, dateFolderId);
 
     await Promise.all(charts.map((c, i) => limit(async () => {
       const idx = i + 1;
       const title = (c.title || `Grafico_${idx}`).replace(/[\\/:*?"<>|]/g, '_').slice(0, 80);
 
       try {
+        const slideId = await createNewSlide(presId);
         await insertChartAndFit({ presId, slideId, chartId: c.chartId, pgW, pgH });
         console.log(`📊 OK ${tienda} gráfico ${idx} (${title})`);
         total++;
