@@ -37,9 +37,6 @@ const TIENDAS = {
   PERSONALES:      { sheetName: 'GRAFICOS PERSONALES', folderId: '1cwLOPdclOxy47Bkp7dwvhzHLIIjB4svO' },
 };
 
-// 📂 Carpeta PTC en tu Drive personal
-const TEMPLATE_PRESENTATION_ID = '1YrKAl9DlHncNcP-ZxQMvuH8RO4Sbwx-jL0zfeUd9pHM';
-
 const DATE_STR     = new Date().toISOString().slice(0, 10);
 const CONCURRENCY  = 2;
 const MAX_RETRIES  = 5;
@@ -100,15 +97,20 @@ async function ensureDatedSubfolder(parentId, dateStr) {
   return folder.data.id;
 }
 
-async function createTempPresentation(name, parentId) {
-  const file = await withRetry('drive.copy presentation', () =>
-    driveApi.files.copy({
-      fileId: TEMPLATE_PRESENTATION_ID,
-      requestBody: { name, parents: [parentId] },
+// ✅ Crear presentación vacía en Drive
+async function createNewPresentation(name, parentId) {
+  const file = await withRetry('drive.create presentation', () =>
+    driveApi.files.create({
+      requestBody: {
+        name,
+        mimeType: 'application/vnd.google-apps.presentation',
+        parents: [parentId]
+      },
       fields: 'id',
-      supportsAllDrives: true,
+      supportsAllDrives: true
     })
   );
+
   const presId = file.data.id;
 
   const pres = await withRetry('slides.get', () =>
@@ -117,19 +119,6 @@ async function createTempPresentation(name, parentId) {
 
   const pgW = pres.data.pageSize?.width?.magnitude || 960;
   const pgH = pres.data.pageSize?.height?.magnitude || 540;
-
-  // 🗑️ borrar primera slide (portada de plantilla)
-  const firstSlideId = pres.data.slides?.[0]?.objectId;
-  if (firstSlideId) {
-    await withRetry('slides.batchUpdate:deleteFirstSlide', () =>
-      slidesApi.presentations.batchUpdate({
-        presentationId: presId,
-        requestBody: {
-          requests: [{ deleteObject: { objectId: firstSlideId } }]
-        }
-      })
-    );
-  }
 
   return { presId, pgW, pgH };
 }
@@ -247,7 +236,7 @@ async function main() {
 
     console.log(`🗂️ ${tienda} / ${sheetName}: ${charts.length} gráficos → ${DATE_STR}`);
 
-    const { presId, pgW, pgH } = await createTempPresentation(`${tienda}__${DATE_STR}`, dateFolderId);
+    const { presId, pgW, pgH } = await createNewPresentation(`${tienda}__${DATE_STR}`, dateFolderId);
 
     await Promise.all(charts.map((c, i) => limit(async () => {
       const idx = i + 1;
