@@ -37,6 +37,11 @@ const TIENDAS = {
   PERSONALES:      { sheetName: 'GRAFICOS PERSONALES', folderId: '1cwLOPdclOxy47Bkp7dwvhzHLIIjB4svO' },
 };
 
+// 📂 Carpeta PTC en tu Drive personal
+const TEMP_FOLDER_ID = '18vTs2um4CCqnI1OKWfBdM5_bnqLSeSJO';
+// 🧩 ID de la plantilla en PTC
+const TEMPLATE_PRESENTATION_ID = '1YrKAl9DlHncNcP-ZxQMvuH8RO4Sbwx-jL0zfeUd9pHM';
+
 const DATE_STR     = new Date().toISOString().slice(0, 10);
 const CONCURRENCY  = 2;
 const MAX_RETRIES  = 5;
@@ -55,7 +60,7 @@ async function withRetry(tag, fn) {
   }
 }
 
-// 🔥 Recoger gráficos de Dashboard en adelante
+// 🔥 Solo recoger gráficos de Dashboard en adelante
 async function getSheetsAndCharts() {
   const fields = 'sheets(properties(sheetId,title),charts(chartId,spec(title)))';
   const res = await withRetry('sheets.get', () =>
@@ -97,20 +102,15 @@ async function ensureDatedSubfolder(parentId, dateStr) {
   return folder.data.id;
 }
 
-// ✅ Crear presentación vacía en Drive
-async function createNewPresentation(name, parentId) {
-  const file = await withRetry('drive.create presentation', () =>
-    driveApi.files.create({
-      requestBody: {
-        name,
-        mimeType: 'application/vnd.google-apps.presentation',
-        parents: [parentId]
-      },
+async function createTempPresentation(name, parentId) {
+  const file = await withRetry('drive.copy presentation', () =>
+    driveApi.files.copy({
+      fileId: TEMPLATE_PRESENTATION_ID,
+      requestBody: { name, parents: [parentId] },
       fields: 'id',
-      supportsAllDrives: true
+      supportsAllDrives: true,
     })
   );
-
   const presId = file.data.id;
 
   const pres = await withRetry('slides.get', () =>
@@ -119,7 +119,6 @@ async function createNewPresentation(name, parentId) {
 
   const pgW = pres.data.pageSize?.width?.magnitude || 960;
   const pgH = pres.data.pageSize?.height?.magnitude || 540;
-
   return { presId, pgW, pgH };
 }
 
@@ -144,11 +143,11 @@ async function createNewSlide(presId) {
   return slideId;
 }
 
-// Insertar gráfico como objeto interactivo y escalar proporcionalmente
+// ✅ Insertar gráfico interactivo y escalar proporcionalmente
 async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
   const chartElemId = `chart_${chartId}_${Date.now()}`;
 
-  // 1. Crear gráfico interactivo SIN size/transform → evita UNIT_UNSPECIFIED
+  // 1. Insertar gráfico como objeto interactivo (sin size/transform)
   await withRetry('slides.batchUpdate:createChart', () =>
     slidesApi.presentations.batchUpdate({
       presentationId: presId,
@@ -182,12 +181,11 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
   const elemW = elem?.size?.width?.magnitude || 100;
   const elemH = elem?.size?.height?.magnitude || 100;
 
-  // 3. Escalado proporcional y centrado
+  // 3. Escalar proporcional y centrar
   const scale = Math.min(pgW / elemW, pgH / elemH);
   const offsetX = (pgW - elemW * scale) / 2;
   const offsetY = (pgH - elemH * scale) / 2;
 
-  // 4. Aplicar transform
   await withRetry('slides.batchUpdate:fit', () =>
     slidesApi.presentations.batchUpdate({
       presentationId: presId,
@@ -236,7 +234,7 @@ async function main() {
 
     console.log(`🗂️ ${tienda} / ${sheetName}: ${charts.length} gráficos → ${DATE_STR}`);
 
-    const { presId, pgW, pgH } = await createNewPresentation(`${tienda}__${DATE_STR}`, dateFolderId);
+    const { presId, pgW, pgH } = await createTempPresentation(`${tienda}__${DATE_STR}`, dateFolderId);
 
     await Promise.all(charts.map((c, i) => limit(async () => {
       const idx = i + 1;
