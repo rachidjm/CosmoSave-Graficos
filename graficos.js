@@ -58,7 +58,7 @@ async function withRetry(tag, fn) {
   }
 }
 
-// 🔥 Solo recoger gráficos de Dashboard en adelante
+// 🔥 Recoger gráficos de Dashboard en adelante
 async function getSheetsAndCharts() {
   const fields = 'sheets(properties(sheetId,title),charts(chartId,spec(title)))';
   const res = await withRetry('sheets.get', () =>
@@ -118,7 +118,7 @@ async function createTempPresentation(name, parentId) {
   const pgW = pres.data.pageSize?.width?.magnitude || 960;
   const pgH = pres.data.pageSize?.height?.magnitude || 540;
 
-  // 🗑️ borrar primera slide (portada vacía)
+  // 🗑️ borrar primera slide (portada de plantilla)
   const firstSlideId = pres.data.slides?.[0]?.objectId;
   if (firstSlideId) {
     await withRetry('slides.batchUpdate:deleteFirstSlide', () =>
@@ -155,11 +155,11 @@ async function createNewSlide(presId) {
   return slideId;
 }
 
-// Insertar gráfico interactivo y escalar proporcionalmente
+// Insertar gráfico como objeto interactivo y escalar proporcionalmente
 async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
   const chartElemId = `chart_${chartId}_${Date.now()}`;
 
-  // 1. Insertar gráfico (sin size/transform → así es interactivo)
+  // 1. Crear gráfico interactivo SIN size/transform → evita UNIT_UNSPECIFIED
   await withRetry('slides.batchUpdate:createChart', () =>
     slidesApi.presentations.batchUpdate({
       presentationId: presId,
@@ -171,9 +171,7 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
               spreadsheetId: SPREADSHEET_ID,
               chartId: chartId,
               linkingMode: 'LINKED',
-              elementProperties: {
-                pageObjectId: slideId
-              }
+              elementProperties: { pageObjectId: slideId }
             }
           }
         ]
@@ -181,7 +179,7 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
     })
   );
 
-  // 2. Leer tamaño real del gráfico
+  // 2. Leer tamaño real del gráfico insertado
   const pres = await withRetry('slides.get after insert', () =>
     slidesApi.presentations.get({
       presentationId: presId,
@@ -195,7 +193,7 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
   const elemW = elem?.size?.width?.magnitude || 100;
   const elemH = elem?.size?.height?.magnitude || 100;
 
-  // 3. Calcular escalado proporcional y centrado
+  // 3. Escalado proporcional y centrado
   const scale = Math.min(pgW / elemW, pgH / elemH);
   const offsetX = (pgW - elemW * scale) / 2;
   const offsetY = (pgH - elemH * scale) / 2;
