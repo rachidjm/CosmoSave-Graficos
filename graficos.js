@@ -2,7 +2,6 @@
 import 'dotenv/config';
 import { google } from 'googleapis';
 import pLimit from 'p-limit';
-import { Readable } from 'stream';
 
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
 if (!SPREADSHEET_ID) { console.error('❌ Falta SPREADSHEET_ID'); process.exit(1); }
@@ -43,7 +42,6 @@ const TEMP_FOLDER_ID = '18vTs2um4CCqnI1OKWfBdM5_bnqLSeSJO';
 // 🧩 ID de la plantilla en PTC
 const TEMPLATE_PRESENTATION_ID = '1YrKAl9DlHncNcP-ZxQMvuH8RO4Sbwx-jL0zfeUd9pHM';
 
-const FILE_PREFIX  = 'Grafico';
 const DATE_STR     = new Date().toISOString().slice(0, 10);
 const CONCURRENCY  = 2;
 const MAX_RETRIES  = 5;
@@ -104,11 +102,11 @@ async function ensureDatedSubfolder(parentId, dateStr) {
   return folder.data.id;
 }
 
-async function createTempPresentation(name) {
+async function createTempPresentation(name, parentId) {
   const file = await withRetry('drive.copy presentation', () =>
     driveApi.files.copy({
       fileId: TEMPLATE_PRESENTATION_ID,
-      requestBody: { name, parents: [TEMP_FOLDER_ID] },
+      requestBody: { name, parents: [parentId] },
       fields: 'id',
       supportsAllDrives: true,
     })
@@ -126,11 +124,11 @@ async function createTempPresentation(name) {
   return { presId, slideId, pgW, pgH };
 }
 
-// ✅ Insertar (con size/transform válidos), luego leer tamaño real y escalar
+// Insertar gráficos y escalar
 async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
   const chartElemId = `chart_${chartId}_${Date.now()}`;
 
-  // 1. Insertar gráfico (bloque que sabemos que funciona)
+  // 1. Crear gráfico
   await withRetry('slides.batchUpdate:createChart', () =>
     slidesApi.presentations.batchUpdate({
       presentationId: presId,
@@ -165,28 +163,8 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
     })
   );
 
-  // 2. Consultar el tamaño real del gráfico
-  const pres = await withRetry('slides.get after insert', () =>
-    slidesApi.presentations.get({
-      presentationId: presId,
-      fields: 'slides(pageElements(objectId,size))'
-    })
-  );
-  const elem = pres.data.slides
-    .flatMap(s => s.pageElements || [])
-    .find(e => e.objectId === chartElemId);
-
-  const elemW = elem?.size?.width?.magnitude || 100;
-  const elemH = elem?.size?.height?.magnitude || 100;
-
-  // 3. Calcular escalado
+  // 2. Escalar para que ocupe casi toda la slide
   const margin = 20;
-  const targetW = pgW - 2 * margin;
-  const targetH = pgH - 2 * margin;
-  const scaleX = targetW / elemW;
-  const scaleY = targetH / elemH;
-
-  // 4. Aplicar transform escalado
   await withRetry('slides.batchUpdate:fit', () =>
     slidesApi.presentations.batchUpdate({
       presentationId: presId,
@@ -197,8 +175,8 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
               objectId: chartElemId,
               applyMode: 'ABSOLUTE',
               transform: {
-                scaleX,
-                scaleY,
+                scaleX: (pgW - 2 * margin) / pgW,
+                scaleY: (pgH - 2 * margin) / pgH,
                 shearX: 0,
                 shearY: 0,
                 translateX: margin,
@@ -213,52 +191,6 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
   );
 
   return chartElemId;
-}
-
-async function exportPresentationPDF(presId) {
-  const res = await withRetry('drive.export(pdf)', () =>
-    driveApi.files.export(
-      { fileId: presId, mimeType: 'application/pdf' },
-      { responseType: 'stream' }
-    )
-  );
-
-  const chunks = [];
-  return await new Promise((resolve, reject) => {
-    res.data.on('data', chunk => chunks.push(chunk));
-    res.data.on('end', () => resolve(Buffer.concat(chunks)));
-    res.data.on('error', reject);
-  });
-}
-
-async function deletePageElement(presId, objectId) {
-  await withRetry('slides.batchUpdate:deleteElement', () =>
-    slidesApi.presentations.batchUpdate({
-      presentationId: presId,
-      requestBody: { requests: [{ deleteObject: { objectId } }] }
-    })
-  );
-}
-
-// Buffer → Stream
-function bufferToStream(buffer) {
-  return new Readable({
-    read() {
-      this.push(buffer);
-      this.push(null);
-    }
-  });
-}
-
-async function uploadPDF({ parentId, name, pdfBuffer }) {
-  await withRetry(`drive.upload ${name}`, () =>
-    driveApi.files.create({
-      requestBody: { name, parents: [parentId], mimeType: 'application/pdf' },
-      media: { mimeType: 'application/pdf', body: bufferToStream(pdfBuffer) },
-      fields: 'id',
-      supportsAllDrives: true,
-    })
-  );
 }
 
 async function main() {
@@ -281,37 +213,24 @@ async function main() {
 
     console.log(`🗂️ ${tienda} / ${sheetName}: ${charts.length} gráficos → ${DATE_STR}`);
 
-    const { presId, slideId, pgW, pgH } = await createTempPresentation(`TMP_${tienda}__${DATE_STR}`);
+    const { presId, slideId, pgW, pgH } = await createTempPresentation(`${tienda}__${DATE_STR}`, dateFolderId);
 
     await Promise.all(charts.map((c, i) => limit(async () => {
       const idx = i + 1;
-      const title = (c.title || `${FILE_PREFIX}_${idx}`).replace(/[\\/:*?"<>|]/g, '_').slice(0, 80);
-      const fileName = `${tienda}__${title}__${DATE_STR}.pdf`;
+      const title = (c.title || `Grafico_${idx}`).replace(/[\\/:*?"<>|]/g, '_').slice(0, 80);
 
       try {
-        const objId = await insertChartAndFit({ presId, slideId, chartId: c.chartId, pgW, pgH });
-        const pdf = await exportPresentationPDF(presId);
-        await uploadPDF({ parentId: dateFolderId, name: fileName, pdfBuffer: pdf });
-        await deletePageElement(presId, objId);
-
-        console.log(`📄 OK ${tienda} → ${fileName}`);
+        await insertChartAndFit({ presId, slideId, chartId: c.chartId, pgW, pgH });
+        console.log(`📊 OK ${tienda} gráfico ${idx} (${title})`);
         total++;
         await sleep(200);
       } catch (e) {
         console.log(`❌ Falló ${tienda} chart#${idx} (${title}): ${e.message || e}`);
       }
     })));
-
-    try {
-      await withRetry('drive.delete pres', () =>
-        driveApi.files.delete({ fileId: presId, supportsAllDrives: true })
-      );
-    } catch (e) {
-      console.log(`⚠️ No se pudo borrar presentación temporal de ${tienda}: ${e.message || e}`);
-    }
   }
 
-  console.log(`✅ Export completado. PDFs subidos: ${total}`);
+  console.log(`✅ Presentaciones creadas con gráficos: ${total}`);
 }
 
 main().catch(err => { console.error('💥 Error:', err); process.exit(1); });
