@@ -45,7 +45,7 @@ const TEMPLATE_PRESENTATION_ID = '1YrKAl9DlHncNcP-ZxQMvuH8RO4Sbwx-jL0zfeUd9pHM';
 
 const FILE_PREFIX  = 'Grafico';
 const DATE_STR     = new Date().toISOString().slice(0, 10);
-const CONCURRENCY  = 1; // ⚠️ uno a uno para no saturar
+const CONCURRENCY  = 2;
 const MAX_RETRIES  = 5;
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -62,7 +62,7 @@ async function withRetry(tag, fn) {
   }
 }
 
-// 🔥 Recoger gráficos
+// 🔥 Solo recoger gráficos de Dashboard en adelante
 async function getSheetsAndCharts() {
   const fields = 'sheets(properties(sheetId,title),charts(chartId,spec(title)))';
   const res = await withRetry('sheets.get', () =>
@@ -126,10 +126,11 @@ async function createTempPresentation(name) {
   return { presId, slideId, pgW, pgH };
 }
 
-// Insertar gráfico y escalar proporcional centrado
+// ✅ Insertar (con size/transform válidos), luego leer tamaño real y escalar
 async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
   const chartElemId = `chart_${chartId}_${Date.now()}`;
 
+  // 1. Insertar gráfico (bloque que sabemos que funciona)
   await withRetry('slides.batchUpdate:createChart', () =>
     slidesApi.presentations.batchUpdate({
       presentationId: presId,
@@ -143,8 +144,19 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
               linkingMode: 'LINKED',
               elementProperties: {
                 pageObjectId: slideId,
-                size: { height: { magnitude: pgH, unit: 'PT' }, width: { magnitude: pgW, unit: 'PT' } },
-                transform: { scaleX: 1, scaleY: 1, shearX: 0, shearY: 0, translateX: 0, translateY: 0, unit: 'PT' }
+                size: {
+                  height: { magnitude: pgH, unit: 'PT' },
+                  width:  { magnitude: pgW, unit: 'PT' }
+                },
+                transform: {
+                  scaleX: 1,
+                  scaleY: 1,
+                  shearX: 0,
+                  shearY: 0,
+                  translateX: 0,
+                  translateY: 0,
+                  unit: 'PT'
+                }
               }
             }
           }
@@ -153,24 +165,28 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
     })
   );
 
+  // 2. Consultar el tamaño real del gráfico
   const pres = await withRetry('slides.get after insert', () =>
     slidesApi.presentations.get({
       presentationId: presId,
       fields: 'slides(pageElements(objectId,size))'
     })
   );
-  const elem = pres.data.slides.flatMap(s => s.pageElements || []).find(e => e.objectId === chartElemId);
+  const elem = pres.data.slides
+    .flatMap(s => s.pageElements || [])
+    .find(e => e.objectId === chartElemId);
+
   const elemW = elem?.size?.width?.magnitude || 100;
   const elemH = elem?.size?.height?.magnitude || 100;
 
-  // Escalado proporcional centrado con margen
-  const margin = 40;
-  const targetW = pgW - margin * 2;
-  const targetH = pgH - margin * 2;
-  const scale = Math.min(targetW / elemW, targetH / elemH);
-  const translateX = (pgW - elemW * scale) / 2;
-  const translateY = (pgH - elemH * scale) / 2;
+  // 3. Calcular escalado
+  const margin = 20;
+  const targetW = pgW - 2 * margin;
+  const targetH = pgH - 2 * margin;
+  const scaleX = targetW / elemW;
+  const scaleY = targetH / elemH;
 
+  // 4. Aplicar transform escalado
   await withRetry('slides.batchUpdate:fit', () =>
     slidesApi.presentations.batchUpdate({
       presentationId: presId,
@@ -180,7 +196,15 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
             updatePageElementTransform: {
               objectId: chartElemId,
               applyMode: 'ABSOLUTE',
-              transform: { scaleX: scale, scaleY: scale, shearX: 0, shearY: 0, translateX, translateY, unit: 'PT' }
+              transform: {
+                scaleX,
+                scaleY,
+                shearX: 0,
+                shearY: 0,
+                translateX: margin,
+                translateY: margin,
+                unit: 'PT'
+              }
             }
           }
         ]
@@ -193,7 +217,10 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
 
 async function exportPresentationPDF(presId) {
   const res = await withRetry('drive.export(pdf)', () =>
-    driveApi.files.export({ fileId: presId, mimeType: 'application/pdf' }, { responseType: 'stream' })
+    driveApi.files.export(
+      { fileId: presId, mimeType: 'application/pdf' },
+      { responseType: 'stream' }
+    )
   );
 
   const chunks = [];
@@ -213,6 +240,7 @@ async function deletePageElement(presId, objectId) {
   );
 }
 
+// Buffer → Stream
 function bufferToStream(buffer) {
   return new Readable({
     read() {
@@ -245,37 +273,34 @@ async function main() {
     const sh = byTitle.get(sheetName);
     if (!sh) { console.log(`⚠️ Hoja no encontrada: "${sheetName}" (${tienda})`); continue; }
     const charts = sh.charts || [];
-    if (!charts.length) { console.log(`ℹ️ ${tienda} / ${sheetName}: sin gráficos`); continue; }
+    if (!charts.length) { console.log(`ℹ️ ${tienda} / ${sheetName}: sin gráficos incrustados`); continue; }
 
     let dateFolderId;
     try { dateFolderId = await ensureDatedSubfolder(folderId, DATE_STR); }
-    catch (e) { console.log(`❌ Carpeta destino inválida para ${tienda}: ${e.message || e}`); continue; }
+    catch (e) { console.log(`❌ Carpeta destino de ${tienda} inválida: ${e.message || e}`); continue; }
 
     console.log(`🗂️ ${tienda} / ${sheetName}: ${charts.length} gráficos → ${DATE_STR}`);
+
     const { presId, slideId, pgW, pgH } = await createTempPresentation(`TMP_${tienda}__${DATE_STR}`);
 
-    for (const [i, c] of charts.entries()) {
+    await Promise.all(charts.map((c, i) => limit(async () => {
       const idx = i + 1;
       const title = (c.title || `${FILE_PREFIX}_${idx}`).replace(/[\\/:*?"<>|]/g, '_').slice(0, 80);
       const fileName = `${tienda}__${title}__${DATE_STR}.pdf`;
 
       try {
         const objId = await insertChartAndFit({ presId, slideId, chartId: c.chartId, pgW, pgH });
-
-        // Esperar a que Slides renderice el gráfico
-        await sleep(2000);
-
         const pdf = await exportPresentationPDF(presId);
         await uploadPDF({ parentId: dateFolderId, name: fileName, pdfBuffer: pdf });
         await deletePageElement(presId, objId);
 
         console.log(`📄 OK ${tienda} → ${fileName}`);
         total++;
-        await sleep(1000); // pausa entre gráficos
+        await sleep(200);
       } catch (e) {
         console.log(`❌ Falló ${tienda} chart#${idx} (${title}): ${e.message || e}`);
       }
-    }
+    })));
 
     try {
       await withRetry('drive.delete pres', () =>
