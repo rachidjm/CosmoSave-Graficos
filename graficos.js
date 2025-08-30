@@ -126,11 +126,11 @@ async function createTempPresentation(name) {
   return { presId, slideId, pgW, pgH };
 }
 
-// ✅ Insertar (con size/transform válidos), luego leer tamaño real y escalar
+// ✅ Insertar gráfico y escalar con más margen para no cortar
 async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
   const chartElemId = `chart_${chartId}_${Date.now()}`;
 
-  // 1. Insertar gráfico (bloque que sabemos que funciona)
+  // 1. Insertar gráfico
   await withRetry('slides.batchUpdate:createChart', () =>
     slidesApi.presentations.batchUpdate({
       presentationId: presId,
@@ -165,7 +165,7 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
     })
   );
 
-  // 2. Consultar el tamaño real del gráfico
+  // 2. Leer tamaño real
   const pres = await withRetry('slides.get after insert', () =>
     slidesApi.presentations.get({
       presentationId: presId,
@@ -179,8 +179,8 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
   const elemW = elem?.size?.width?.magnitude || 100;
   const elemH = elem?.size?.height?.magnitude || 100;
 
-  // 3. Calcular escalado
-  const margin = 20;
+  // 3. Calcular escalado con margen extra
+  const margin = 80; // aumentado para que no se corte
   const targetW = pgW - 2 * margin;
   const targetH = pgH - 2 * margin;
   const scaleX = targetW / elemW;
