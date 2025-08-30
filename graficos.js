@@ -122,17 +122,15 @@ async function createTempPresentation(name) {
   const slideId = pres.data.slides?.[0]?.objectId;
   const pgW = pres.data.pageSize?.width?.magnitude || 960;
   const pgH = pres.data.pageSize?.height?.magnitude || 540;
-  const pgUnit = 'PT'; // 👈 fuerza la unidad
-
   if (!slideId) throw new Error('No se pudo obtener slideId inicial');
-  return { presId, slideId, pgW, pgH, pgUnit };
+  return { presId, slideId, pgW, pgH };
 }
 
-// ✅ FIX con unidad forzada
-async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH, pgUnit }) {
+// ✅ FIX: createChart sin units, resize después
+async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
   const chartElemId = `chart_${chartId}_${Date.now()}`;
 
-  // 1. Crear gráfico
+  // 1. Crear gráfico (solo con pageObjectId)
   await withRetry('slides.batchUpdate:createChart', () =>
     slidesApi.presentations.batchUpdate({
       presentationId: presId,
@@ -152,21 +150,12 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH, pgUnit })
     })
   );
 
-  // 2. Redimensionar
+  // 2. Ajustar tamaño y posición
   await withRetry('slides.batchUpdate:resize', () =>
     slidesApi.presentations.batchUpdate({
       presentationId: presId,
       requestBody: {
         requests: [
-          {
-            updateSize: {
-              objectId: chartElemId,
-              size: {
-                height: { magnitude: pgH, unit: pgUnit },
-                width:  { magnitude: pgW, unit: pgUnit }
-              }
-            }
-          },
           {
             updatePageElementTransform: {
               objectId: chartElemId,
@@ -178,7 +167,16 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH, pgUnit })
                 shearY: 0,
                 translateX: 0,
                 translateY: 0,
-                unit: pgUnit
+                unit: 'PT'
+              }
+            }
+          },
+          {
+            updateSize: {
+              objectId: chartElemId,
+              size: {
+                height: { magnitude: pgH, unit: 'PT' },
+                width:  { magnitude: pgW, unit: 'PT' }
               }
             }
           }
@@ -256,7 +254,7 @@ async function main() {
 
     console.log(`🗂️ ${tienda} / ${sheetName}: ${charts.length} gráficos → ${DATE_STR}`);
 
-    const { presId, slideId, pgW, pgH, pgUnit } = await createTempPresentation(`TMP_${tienda}__${DATE_STR}`);
+    const { presId, slideId, pgW, pgH } = await createTempPresentation(`TMP_${tienda}__${DATE_STR}`);
 
     await Promise.all(charts.map((c, i) => limit(async () => {
       const idx = i + 1;
@@ -264,7 +262,7 @@ async function main() {
       const fileName = `${tienda}__${title}__${DATE_STR}.pdf`;
 
       try {
-        const objId = await insertChartAndFit({ presId, slideId, chartId: c.chartId, pgW, pgH, pgUnit });
+        const objId = await insertChartAndFit({ presId, slideId, chartId: c.chartId, pgW, pgH });
         const pdf = await exportPresentationPDF(presId);
         await uploadPDF({ parentId: dateFolderId, name: fileName, pdfBuffer: pdf });
         await deletePageElement(presId, objId);
