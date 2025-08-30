@@ -45,7 +45,7 @@ const TEMPLATE_PRESENTATION_ID = '1YrKAl9DlHncNcP-ZxQMvuH8RO4Sbwx-jL0zfeUd9pHM';
 
 const FILE_PREFIX  = 'Grafico';
 const DATE_STR     = new Date().toISOString().slice(0, 10);
-const CONCURRENCY  = 1;  // ⚠️ Procesar de uno en uno
+const CONCURRENCY  = 1; // ⚠️ uno a uno para no saturar
 const MAX_RETRIES  = 5;
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -62,7 +62,7 @@ async function withRetry(tag, fn) {
   }
 }
 
-// 🔥 Recoger gráficos de dashboards
+// 🔥 Recoger gráficos
 async function getSheetsAndCharts() {
   const fields = 'sheets(properties(sheetId,title),charts(chartId,spec(title)))';
   const res = await withRetry('sheets.get', () =>
@@ -126,7 +126,7 @@ async function createTempPresentation(name) {
   return { presId, slideId, pgW, pgH };
 }
 
-// Insertar gráfico y escalar proporcional con margen
+// ✅ Insertar gráfico y escalar proporcional centrado
 async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
   const chartElemId = `chart_${chartId}_${Date.now()}`;
 
@@ -163,9 +163,11 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
   const elemW = elem?.size?.width?.magnitude || 100;
   const elemH = elem?.size?.height?.magnitude || 100;
 
-  // ✅ Escalado proporcional con margen de seguridad
+  // Escalado proporcional centrado con margen
   const margin = 40;
-  const scale = Math.min((pgW - margin) / elemW, (pgH - margin) / elemH);
+  const targetW = pgW - margin * 2;
+  const targetH = pgH - margin * 2;
+  const scale = Math.min(targetW / elemW, targetH / elemH);
   const translateX = (pgW - elemW * scale) / 2;
   const translateY = (pgH - elemH * scale) / 2;
 
@@ -259,6 +261,7 @@ async function main() {
 
       try {
         const objId = await insertChartAndFit({ presId, slideId, chartId: c.chartId, pgW, pgH });
+        await sleep(1000); // dejar tiempo a renderizar
         const pdf = await exportPresentationPDF(presId);
         await uploadPDF({ parentId: dateFolderId, name: fileName, pdfBuffer: pdf });
         await deletePageElement(presId, objId);
