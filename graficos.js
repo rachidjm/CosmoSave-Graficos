@@ -49,7 +49,7 @@ const CONCURRENCY  = 2;
 const MAX_RETRIES  = 5;
 
 // 📏 Margen ajustado fino
-const MARGIN_PT = 2;
+const MARGIN_PT = 0;
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 async function withRetry(tag, fn) {
