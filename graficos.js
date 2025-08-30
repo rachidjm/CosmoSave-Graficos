@@ -49,7 +49,7 @@ const CONCURRENCY  = 2;
 const MAX_RETRIES  = 5;
 
 // 📏 Margen configurable
-const MARGIN_PT = 50; // Ajustar entre 40-60 según se vea (más alto = más aire, menos recortes)
+const MARGIN_PT = 50; // Ajustar entre 40-60 según se vea
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 async function withRetry(tag, fn) {
@@ -129,7 +129,7 @@ async function createTempPresentation(name) {
   return { presId, slideId, pgW, pgH };
 }
 
-// ✅ Insertar gráfico y escalar con margen configurable
+// ✅ Insertar gráfico, escalar y centrar
 async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
   const chartElemId = `chart_${chartId}_${Date.now()}`;
 
@@ -182,14 +182,18 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
   const elemW = elem?.size?.width?.magnitude || 100;
   const elemH = elem?.size?.height?.magnitude || 100;
 
-  // 3. Calcular escalado con margen configurable
+  // 3. Calcular escalado con margen
   const margin = MARGIN_PT;
   const targetW = pgW - 2 * margin;
   const targetH = pgH - 2 * margin;
   const scaleX = targetW / elemW;
   const scaleY = targetH / elemH;
 
-  // 4. Aplicar transform escalado
+  // 4. Calcular traslación centrada
+  const translateX = (pgW - elemW * scaleX) / 2;
+  const translateY = (pgH - elemH * scaleY) / 2;
+
+  // 5. Aplicar transform escalado y centrado
   await withRetry('slides.batchUpdate:fit', () =>
     slidesApi.presentations.batchUpdate({
       presentationId: presId,
@@ -204,8 +208,8 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
                 scaleY,
                 shearX: 0,
                 shearY: 0,
-                translateX: margin,
-                translateY: margin,
+                translateX,
+                translateY,
                 unit: 'PT'
               }
             }
