@@ -143,10 +143,11 @@ async function createNewSlide(presId) {
   return slideId;
 }
 
-// Insertar gráfico y escalar
+// Insertar gráfico y escalar al 100% de la slide
 async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
   const chartElemId = `chart_${chartId}_${Date.now()}`;
 
+  // 1. Insertar gráfico
   await withRetry('slides.batchUpdate:createChart', () =>
     slidesApi.presentations.batchUpdate({
       presentationId: presId,
@@ -181,7 +182,25 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
     })
   );
 
-  const margin = 20;
+  // 2. Leer tamaño real del gráfico insertado
+  const pres = await withRetry('slides.get after insert', () =>
+    slidesApi.presentations.get({
+      presentationId: presId,
+      fields: 'slides(pageElements(objectId,size))'
+    })
+  );
+  const elem = pres.data.slides
+    .flatMap(s => s.pageElements || [])
+    .find(e => e.objectId === chartElemId);
+
+  const elemW = elem?.size?.width?.magnitude || 100;
+  const elemH = elem?.size?.height?.magnitude || 100;
+
+  // 3. Escalar a 100% de la slide
+  const scaleX = pgW / elemW;
+  const scaleY = pgH / elemH;
+
+  // 4. Aplicar transform
   await withRetry('slides.batchUpdate:fit', () =>
     slidesApi.presentations.batchUpdate({
       presentationId: presId,
@@ -192,12 +211,12 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
               objectId: chartElemId,
               applyMode: 'ABSOLUTE',
               transform: {
-                scaleX: (pgW - 2 * margin) / pgW,
-                scaleY: (pgH - 2 * margin) / pgH,
+                scaleX,
+                scaleY,
                 shearX: 0,
                 shearY: 0,
-                translateX: margin,
-                translateY: margin,
+                translateX: 0,
+                translateY: 0,
                 unit: 'PT'
               }
             }
