@@ -48,7 +48,7 @@ const DATE_STR     = new Date().toISOString().slice(0, 10);
 const CONCURRENCY  = 2;
 const MAX_RETRIES  = 5;
 
-// 📏 Margen ajustado fino
+// 📏 Margen eliminado (pantalla completa)
 const MARGIN_PT = 0;
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -295,7 +295,7 @@ async function main() {
 
         console.log(`📄 OK ${tienda} → ${fileName}`);
         total++;
-        await sleep(200);
+        await sleep(600);   // ⏳ antes eran 200 ms → ahora 600 ms
       } catch (e) {
         console.log(`❌ Falló ${tienda} chart#${idx} (${title}): ${e.message || e}`);
       }
