@@ -48,6 +48,9 @@ const DATE_STR     = new Date().toISOString().slice(0, 10);
 const CONCURRENCY  = 2;
 const MAX_RETRIES  = 5;
 
+// 📏 Margen configurable
+const MARGIN_PT = 50; // Ajustar entre 40-60 según se vea (más alto = más aire, menos recortes)
+
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 async function withRetry(tag, fn) {
   let wait = 700;
@@ -126,7 +129,7 @@ async function createTempPresentation(name) {
   return { presId, slideId, pgW, pgH };
 }
 
-// ✅ Insertar gráfico y escalar con más margen para no cortar
+// ✅ Insertar gráfico y escalar con margen configurable
 async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
   const chartElemId = `chart_${chartId}_${Date.now()}`;
 
@@ -179,8 +182,8 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
   const elemW = elem?.size?.width?.magnitude || 100;
   const elemH = elem?.size?.height?.magnitude || 100;
 
-  // 3. Calcular escalado con margen extra
-  const margin = 80; // aumentado para que no se corte
+  // 3. Calcular escalado con margen configurable
+  const margin = MARGIN_PT;
   const targetW = pgW - 2 * margin;
   const targetH = pgH - 2 * margin;
   const scaleX = targetW / elemW;
