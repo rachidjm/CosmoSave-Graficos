@@ -48,8 +48,8 @@ const DATE_STR     = new Date().toISOString().slice(0, 10);
 const CONCURRENCY  = 2;
 const MAX_RETRIES  = 5;
 
-// 📏 Margen configurable
-const MARGIN_PT = 50; // Ajustar entre 40-60 según se vea
+// 📏 Margen ajustado
+const MARGIN_PT = 5;
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 async function withRetry(tag, fn) {
@@ -65,7 +65,6 @@ async function withRetry(tag, fn) {
   }
 }
 
-// 🔥 Solo recoger gráficos de Dashboard en adelante
 async function getSheetsAndCharts() {
   const fields = 'sheets(properties(sheetId,title),charts(chartId,spec(title)))';
   const res = await withRetry('sheets.get', () =>
@@ -129,11 +128,9 @@ async function createTempPresentation(name) {
   return { presId, slideId, pgW, pgH };
 }
 
-// ✅ Insertar gráfico, escalar y centrar
 async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
   const chartElemId = `chart_${chartId}_${Date.now()}`;
 
-  // 1. Insertar gráfico
   await withRetry('slides.batchUpdate:createChart', () =>
     slidesApi.presentations.batchUpdate({
       presentationId: presId,
@@ -168,7 +165,6 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
     })
   );
 
-  // 2. Leer tamaño real
   const pres = await withRetry('slides.get after insert', () =>
     slidesApi.presentations.get({
       presentationId: presId,
@@ -182,18 +178,15 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
   const elemW = elem?.size?.width?.magnitude || 100;
   const elemH = elem?.size?.height?.magnitude || 100;
 
-  // 3. Calcular escalado con margen
   const margin = MARGIN_PT;
   const targetW = pgW - 2 * margin;
   const targetH = pgH - 2 * margin;
   const scaleX = targetW / elemW;
   const scaleY = targetH / elemH;
 
-  // 4. Calcular traslación centrada
   const translateX = (pgW - elemW * scaleX) / 2;
   const translateY = (pgH - elemH * scaleY) / 2;
 
-  // 5. Aplicar transform escalado y centrado
   await withRetry('slides.batchUpdate:fit', () =>
     slidesApi.presentations.batchUpdate({
       presentationId: presId,
@@ -247,7 +240,6 @@ async function deletePageElement(presId, objectId) {
   );
 }
 
-// Buffer → Stream
 function bufferToStream(buffer) {
   return new Readable({
     read() {
