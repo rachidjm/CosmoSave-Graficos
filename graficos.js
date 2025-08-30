@@ -126,11 +126,11 @@ async function createTempPresentation(name) {
   return { presId, slideId, pgW, pgH };
 }
 
-// ✅ FIX: crear gráfico y luego redimensionar con transform
+// ✅ FIX: crear gráfico con size (unit: 'PT'), luego redimensionar con transform
 async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
   const chartElemId = `chart_${chartId}_${Date.now()}`;
 
-  // 1. Crear gráfico, sin size/transform (solo el slide destino)
+  // 1. Crear gráfico con size definido
   await withRetry('slides.batchUpdate:createChart', () =>
     slidesApi.presentations.batchUpdate({
       presentationId: presId,
@@ -142,7 +142,13 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
               spreadsheetId: SPREADSHEET_ID,
               chartId: chartId,
               linkingMode: 'LINKED',
-              elementProperties: { pageObjectId: slideId }
+              elementProperties: {
+                pageObjectId: slideId,
+                size: {
+                  height: { magnitude: pgH, unit: 'PT' },
+                  width:  { magnitude: pgW, unit: 'PT' }
+                }
+              }
             }
           }
         ]
@@ -150,7 +156,7 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
     })
   );
 
-  // 2. Escalar para ocupar casi toda la slide con margen
+  // 2. Ajustar con márgenes
   const margin = 20;
   await withRetry('slides.batchUpdate:fit', () =>
     slidesApi.presentations.batchUpdate({
