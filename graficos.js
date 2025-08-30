@@ -126,7 +126,7 @@ async function createTempPresentation(name) {
   return { presId, slideId, pgW, pgH };
 }
 
-// ✅ Insertar gráfico y escalar proporcional centrado
+// Insertar gráfico y escalar proporcional centrado
 async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
   const chartElemId = `chart_${chartId}_${Date.now()}`;
 
@@ -261,7 +261,10 @@ async function main() {
 
       try {
         const objId = await insertChartAndFit({ presId, slideId, chartId: c.chartId, pgW, pgH });
-        await sleep(1000); // dejar tiempo a renderizar
+
+        // Esperar a que Slides renderice el gráfico
+        await sleep(2000);
+
         const pdf = await exportPresentationPDF(presId);
         await uploadPDF({ parentId: dateFolderId, name: fileName, pdfBuffer: pdf });
         await deletePageElement(presId, objId);
