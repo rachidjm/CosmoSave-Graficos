@@ -38,8 +38,6 @@ const TIENDAS = {
 };
 
 // 📂 Carpeta PTC en tu Drive personal
-const TEMP_FOLDER_ID = '18vTs2um4CCqnI1OKWfBdM5_bnqLSeSJO';
-// 🧩 ID de la plantilla en PTC
 const TEMPLATE_PRESENTATION_ID = '1YrKAl9DlHncNcP-ZxQMvuH8RO4Sbwx-jL0zfeUd9pHM';
 
 const DATE_STR     = new Date().toISOString().slice(0, 10);
@@ -119,6 +117,20 @@ async function createTempPresentation(name, parentId) {
 
   const pgW = pres.data.pageSize?.width?.magnitude || 960;
   const pgH = pres.data.pageSize?.height?.magnitude || 540;
+
+  // 🗑️ borrar primera slide (portada vacía)
+  const firstSlideId = pres.data.slides?.[0]?.objectId;
+  if (firstSlideId) {
+    await withRetry('slides.batchUpdate:deleteFirstSlide', () =>
+      slidesApi.presentations.batchUpdate({
+        presentationId: presId,
+        requestBody: {
+          requests: [{ deleteObject: { objectId: firstSlideId } }]
+        }
+      })
+    );
+  }
+
   return { presId, pgW, pgH };
 }
 
@@ -143,11 +155,11 @@ async function createNewSlide(presId) {
   return slideId;
 }
 
-// Insertar gráfico y escalar al 100% de la slide
+// Insertar gráfico interactivo y escalar proporcionalmente
 async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
   const chartElemId = `chart_${chartId}_${Date.now()}`;
 
-  // 1. Insertar gráfico
+  // 1. Insertar gráfico (sin size/transform → así es interactivo)
   await withRetry('slides.batchUpdate:createChart', () =>
     slidesApi.presentations.batchUpdate({
       presentationId: presId,
@@ -160,20 +172,7 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
               chartId: chartId,
               linkingMode: 'LINKED',
               elementProperties: {
-                pageObjectId: slideId,
-                size: {
-                  height: { magnitude: pgH, unit: 'PT' },
-                  width:  { magnitude: pgW, unit: 'PT' }
-                },
-                transform: {
-                  scaleX: 1,
-                  scaleY: 1,
-                  shearX: 0,
-                  shearY: 0,
-                  translateX: 0,
-                  translateY: 0,
-                  unit: 'PT'
-                }
+                pageObjectId: slideId
               }
             }
           }
@@ -182,7 +181,7 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
     })
   );
 
-  // 2. Leer tamaño real del gráfico insertado
+  // 2. Leer tamaño real del gráfico
   const pres = await withRetry('slides.get after insert', () =>
     slidesApi.presentations.get({
       presentationId: presId,
@@ -196,9 +195,10 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
   const elemW = elem?.size?.width?.magnitude || 100;
   const elemH = elem?.size?.height?.magnitude || 100;
 
-  // 3. Escalar a 100% de la slide
-  const scaleX = pgW / elemW;
-  const scaleY = pgH / elemH;
+  // 3. Calcular escalado proporcional y centrado
+  const scale = Math.min(pgW / elemW, pgH / elemH);
+  const offsetX = (pgW - elemW * scale) / 2;
+  const offsetY = (pgH - elemH * scale) / 2;
 
   // 4. Aplicar transform
   await withRetry('slides.batchUpdate:fit', () =>
@@ -211,12 +211,12 @@ async function insertChartAndFit({ presId, slideId, chartId, pgW, pgH }) {
               objectId: chartElemId,
               applyMode: 'ABSOLUTE',
               transform: {
-                scaleX,
-                scaleY,
+                scaleX: scale,
+                scaleY: scale,
                 shearX: 0,
                 shearY: 0,
-                translateX: 0,
-                translateY: 0,
+                translateX: offsetX,
+                translateY: offsetY,
                 unit: 'PT'
               }
             }
